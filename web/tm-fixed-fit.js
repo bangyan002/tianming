@@ -15,7 +15,7 @@
 //               （把御案从 viewport 相对改写成 1920×1080 舞台相对·不靠 WebView 的 fixed+transform 怪癖）
 //             + 隐藏 legacy #mobile-nav（tm-game-loop _initMobileNav 冒的旧底栏）。
 //
-//  仅 capacitor（APK）或测试 ?fit=1 生效；桌面/普通 web 不动（窗口自由）。
+//  capacitor（APK）、iPhone 网页或测试 ?fit=1 生效；桌面网页仍按窗口自适应。
 // ============================================================
 
 (function () {
@@ -24,8 +24,8 @@
 
   // 虚拟舞台分辨率（设置·界面显示·「渲染分辨率」存 tm.fitResolution='WxH'）。舞台越小 → fit 缩放
   // 因子越大 → 整个 UI（字/图/钮）等比变大，代价是单屏信息密度降低。
-  // 未设置时：APK 出厂默认 1477×831「标准」（owner 拍板·1920 原生舞台在手机上 scale≈0.37 字太小）；
-  // 桌面/网页默认不进 fit（自适应窗口），仅当玩家在设置里显式选定分辨率才走固定舞台（P社式语义：
+// 未设置时：APK 与 iPhone 网页默认 1477×831「标准」（owner 拍板·1920 原生舞台在手机上 scale≈0.37 字太小）；
+// 桌面/其他网页默认不进 fit（自适应窗口），仅当玩家在设置里显式选定分辨率才走固定舞台（P社式语义：
   // 选低于窗口的分辨率 = 界面整体放大）。CSSOM 舞台归一化不可逆 → 改档由设置面板触发整页重载生效。
   var VW = 1477, VH = 831;
   try {
@@ -36,7 +36,16 @@
     }
   } catch (_) {}
 
+  // iPhone 网页也使用完整舞台；平台判定独立于 localStorage，隐私设置不能阻断适配。
+  var iphoneWeb = false;
+  try {
+    iphoneWeb = /iPhone|iPod/.test(window.navigator && window.navigator.userAgent || '')
+      && !(window.TM && window.TM.platform && (window.TM.platform.kind === 'electron' || window.TM.platform.kind === 'capacitor'))
+      && !(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
+  } catch (_) {}
+
   function shouldFit() {
+    if (iphoneWeb) return true;
     try {
       if (location.search.indexOf('fit=1') >= 0) return true;            // 测试强制
       if (window.TM && window.TM.platform && window.TM.platform.kind === 'capacitor') return true; // APK
@@ -58,7 +67,8 @@
     var _sw0 = window.innerWidth, _sh0 = window.innerHeight;
     var _hasFixedRes = false;
     try { var _r0 = localStorage.getItem('tm.fitResolution'); _hasFixedRes = !!(_r0 && /^\d{3,4}x\d{3,4}$/.test(_r0)); } catch (_) {}
-    if (_sw0 > 0 && _sh0 > 0 && !_hasFixedRes) {
+    // Safari 的地址栏/键盘和方向会变：保留标准舞台，避免首次横竖屏决定永久画布宽度。
+    if (!iphoneWeb && _sw0 > 0 && _sh0 > 0 && !_hasFixedRes) {
       var _dynW = Math.round(VH * _sw0 / _sh0);   // 舞台宽 = 高度基准 VH × 设备宽高比
       if (_dynW > VW) VW = _dynW;                 // 只向更宽扩展（竖向 UI 设计基准 VH 不变）
     }
@@ -212,20 +222,60 @@
     mo.observe(document.documentElement, { childList: true, subtree: true });
   } catch (_) {}
 
+  // 安全区使用未缩放的 CSS 像素；探针不占布局，舞台整体落在刘海与手势条之间。
+  var safeAreaProbe = null;
+  function iphoneViewport() {
+    var vv = window.visualViewport;
+    // Safari 允许用户手动放大页面：保留当前舞台缩放，避免反向缩小抵消用户的放大。
+    if (vv && vv.scale && Math.abs(vv.scale - 1) > 0.01) return null;
+    if (!safeAreaProbe && document.body) {
+      safeAreaProbe = document.createElement('div');
+      safeAreaProbe.setAttribute('aria-hidden', 'true');
+      safeAreaProbe.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;'
+        + 'padding-top:env(safe-area-inset-top,0px);padding-right:env(safe-area-inset-right,0px);'
+        + 'padding-bottom:env(safe-area-inset-bottom,0px);padding-left:env(safe-area-inset-left,0px);';
+      document.body.appendChild(safeAreaProbe);
+    }
+    var cs = safeAreaProbe && window.getComputedStyle ? window.getComputedStyle(safeAreaProbe) : {};
+    var left = Math.max(vv ? vv.offsetLeft : 0, parseFloat(cs.paddingLeft) || 0);
+    var top = Math.max(vv ? vv.offsetTop : 0, parseFloat(cs.paddingTop) || 0);
+    var right = Math.min(vv ? vv.offsetLeft + vv.width : window.innerWidth,
+      window.innerWidth - (parseFloat(cs.paddingRight) || 0));
+    var bottom = Math.min(vv ? vv.offsetTop + vv.height : window.innerHeight,
+      window.innerHeight - (parseFloat(cs.paddingBottom) || 0));
+    return { width: right - left, height: bottom - top,
+      left: left + (window.scrollX || 0), top: top + (window.scrollY || 0) };
+  }
+
   var raf = 0;
   function fit() {
     raf = 0;
     // device-width → innerWidth/innerHeight 是真设备 CSS 尺寸。s=min(W/VW,H/VH)：横屏手机受高约束→侧边 letterbox。
     var sw = window.innerWidth, sh = window.innerHeight;
-    if (!sw || !sh) return;
+    var ox = 0, oy = 0;
+    if (iphoneWeb) {
+      var view = iphoneViewport();
+      if (!view) return;
+      sw = view.width; sh = view.height; ox = view.left; oy = view.top;
+    }
+    if (!(sw > 0 && sh > 0)) return;
     var s = Math.min(sw / VW, sh / VH);
-    var x = Math.round((sw - VW * s) / 2), y = Math.round((sh - VH * s) / 2);
+    var x = ox + Math.round((sw - VW * s) / 2), y = oy + Math.round((sh - VH * s) / 2);
     if (document.body) document.body.style.transform = 'translate(' + x + 'px,' + y + 'px) scale(' + s + ')';
   }
   function schedule() { if (!raf) raf = requestAnimationFrame(fit); }
 
   window.addEventListener('resize', schedule);
   window.addEventListener('orientationchange', function () { setTimeout(fit, 60); });
+  if (iphoneWeb) {
+    // 地址栏、软键盘只改变 visualViewport 时，window.resize 不一定触发。
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', schedule);
+      window.visualViewport.addEventListener('scroll', schedule);
+    }
+    window.addEventListener('pageshow', schedule);
+    document.addEventListener('focusout', function () { setTimeout(schedule, 300); });
+  }
   if (document.body) fit(); else window.addEventListener('DOMContentLoaded', fit);
   // 字体/布局沉降后再校准几次（避免初期算错）
   setTimeout(fit, 200); setTimeout(fit, 800); setTimeout(fit, 2000);

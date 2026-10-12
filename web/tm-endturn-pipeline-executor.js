@@ -73,6 +73,8 @@
       entry.ok = true;
       return entry;
     } catch (e) {
+      var reliability = TM.Endturn.Reliability;
+      if (reliability && reliability.noteFailure) reliability.noteFailure(e, { stage: _stepLabel(step.name) });
       entry.error = e;
       entry.ms = _now() - t0;
       if (policy === 'retry') {
@@ -103,6 +105,7 @@
 
     for (var i = 0; i < steps.length; i++) {
       var step = steps[i];
+      if (TM.Endturn.Reliability) TM.Endturn.Reliability.mark(ctx.meta.reliabilityScope, _stepLabel(step.name));
       if (TM.Endturn.Timing && typeof TM.Endturn.Timing.mark === 'function') {
         TM.Endturn.Timing.mark(ctx, 'step_start', {
           step: step.name,

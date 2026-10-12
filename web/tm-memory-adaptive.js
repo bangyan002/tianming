@@ -58,13 +58,9 @@
     return !row || row.state === 'unavailable' ? 'unknown' : (row.ok ? 'supported' : 'failed');
   }
   function plan(opts) {
-    opts = opts || {}; var tier = opts.tier || 'primary', conf = (root.P || {}).conf || {};
-    var record = evidence(tier, opts.now == null ? Date.now() : opts.now), cfg = config(tier);
-    var suffix = tier === 'secondary' ? '_secondary' : '', contextK = finite(opts.contextK, 0, 1, 2048);
-    if (!contextK) contextK = finite(conf['contextSizeK' + suffix], 0, 1, 2048);
-    if (!contextK && conf['_ctxCacheKey' + suffix] === String(cfg.model || '').trim() + '@' + String(cfg.url || '')) contextK = finite(conf['_detectedContextK' + suffix], 0, 1, 2048);
-    if (!contextK && tier === 'primary' && typeof root.getModelContextSizeK === 'function') contextK = finite(root.getModelContextSizeK(), 32, 1, 2048);
-    if (!contextK) contextK = 32;
+    opts = opts || {}; var tier = opts.tier || 'primary';
+    var record = evidence(tier, opts.now == null ? Date.now() : opts.now);
+    var contextK = typeof root.getModelContextSizeK === 'function' ? finite(root.getModelContextSizeK(tier), 1024, 1, 2048) : 1024;
     var json = checkState(record, 'json_schema'), recall = checkState(record, 'memory_recall'), synthesis = checkState(record, 'memory_synthesis'), tools = checkState(record, 'memory_tools');
     var mode = contextK < 16 || json === 'failed' || recall === 'failed' ? 'compact' : 'balanced';
     if (contextK >= 32 && json === 'supported' && recall === 'supported' && synthesis === 'supported') mode = 'deep';

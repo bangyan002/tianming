@@ -6,12 +6,12 @@ function test(name, run) { tests.push({ name, run }); }
 function ids(hits) { return Array.from(hits, hit => hit.id); }
 test('unverified capacity does not enable autonomous tool calls', () => {
   const c = context(), p = c.TM.MemoryAdaptive.plan(); assert.equal(p.mode, 'balanced'); assert.equal(p.maxToolCalls, 0);
-  c.P.conf.contextSizeK = 4; assert.equal(c.TM.MemoryAdaptive.plan().mode, 'compact');
+  c.P.conf.contextSizeK = 4; assert.equal(c.TM.MemoryAdaptive.plan().contextK, 1024); assert.equal(c.TM.MemoryAdaptive.plan().mode, 'balanced');
 });
 test('verified memory skills enable bounded deep mechanisms', () => {
   const c = context(); profile(c); const p = c.TM.MemoryAdaptive.plan();
   assert.equal(p.mode, 'deep'); assert.equal(p.maxRounds, 2); assert.equal(p.maxToolCalls, 6);
-  c.P.conf.contextSizeK = 4; const compact = c.TM.MemoryAdaptive.plan(); assert.equal(compact.mode, 'compact'); assert(compact.memoryTokens <= 4096 * 0.12);
+  c.P.conf.contextSizeK = 4; const fixed = c.TM.MemoryAdaptive.plan(); assert.equal(fixed.contextK, 1024); assert.equal(fixed.mode, 'deep'); assert.equal(fixed.memoryTokens, p.memoryTokens);
 });
 test('model, endpoint, tier and expiry own their evidence', () => {
   const c = context(); profile(c); assert.equal(c.TM.MemoryAdaptive.plan().verified, true);

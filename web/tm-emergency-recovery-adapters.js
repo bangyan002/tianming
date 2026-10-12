@@ -3,30 +3,49 @@
   'use strict';var TM=root.TM=root.TM||{};if(TM.RecoveryAdapters)return;
   var responseMeta=new WeakMap(), normalOwners=new WeakMap();
   function fail(code){return {ok:false,code:code};}function clone(v){return JSON.parse(JSON.stringify(v));}
-  function lex(text){
+  function lex(text,positions){
     var out=[],i=0,rx=/^(?:"(?:[^"\\\u0000-\u001f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*"|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null|[{}\[\],:])/;
-    while(i<text.length){if(/\s/.test(text[i])){i++;continue;}var m=text.slice(i).match(rx);if(!m)throw Error('包含未知词法或未闭合字符串');out.push(m[0]);i+=m[0].length;}return out;
+    while(i<text.length){if(/\s/.test(text[i])){i++;continue;}var m=text.slice(i).match(rx);if(!m)throw Error('包含未知词法或未闭合字符串');out.push(positions?{token:m[0],start:i,end:i+m[0].length}:m[0]);i+=m[0].length;}return out;
   }
   function strict(text){
     var t=lex(text),i=0;
-    function value(depth){
+    function value(depth,path){
       if(depth>100)throw Error('JSON 嵌套过深');var token=t[i++];
-      if(token==='{'){var keys=new Set();if(t[i]==='}'){i++;return;}while(true){var k=t[i++];if(!k||k[0]!=='"'||t[i++]!==':')throw Error('对象字段结构错误');var name=JSON.parse(k);if(keys.has(name)||['__proto__','constructor','prototype'].includes(name))throw Error('重复或保留字段不可自动修复');keys.add(name);value(depth+1);if(t[i++]==='}')break;if(t[i-1]!==',')throw Error('缺少对象分隔');}return;}
-      if(token==='['){if(t[i]===']'){i++;return;}while(true){value(depth+1);if(t[i++]===']')break;if(t[i-1]!==',')throw Error('缺少数组分隔');}return;}
+      if(token==='{'){var keys=new Set();if(t[i]==='}'){i++;return;}while(true){var k=t[i++];if(!k||k[0]!=='"'||t[i++]!==':')throw Error('对象字段结构错误');var name=JSON.parse(k),fieldPath=path+'.'+name;if(keys.has(name)||['__proto__','constructor','prototype'].includes(name)){var error=Error('字段「'+fieldPath+'」'+(keys.has(name)?'重复出现':'属于保留字段')+'，不可自动修复');error.field=name;error.path=fieldPath;throw error;}keys.add(name);value(depth+1,fieldPath);if(t[i++]==='}')break;if(t[i-1]!==',')throw Error('缺少对象分隔');}return;}
+      if(token==='['){if(t[i]===']'){i++;return;}var index=0;while(true){value(depth+1,path+'['+(index++)+']');if(t[i++]===']')break;if(t[i-1]!==',')throw Error('缺少数组分隔');}return;}
       if(!token||!/^"|^(?:true|false|null)$|^-?\d/.test(token))throw Error('JSON 值无效');
       if(/^-?\d/.test(token)&&(!Number.isFinite(Number(token))||!/[.eE]/.test(token)&&!Number.isSafeInteger(Number(token))))throw Error('数值不能精确表示，须明确数值格式');
     }
-    value(0);if(i!==t.length)throw Error('多个顶层值或尾随片段');return JSON.parse(text);
+    value(0,'$');if(i!==t.length)throw Error('多个顶层值或尾随片段');return JSON.parse(text);
   }
   function unfence(text){return String(text||'').trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i,'$1');}
-  function edited(raw,edits){
+  // Only a root closer followed by another naked object key can be redundant.
+  // Nested brackets and separate top-level objects never qualify for this exception.
+  function sourceAtoms(text,rejoinRoot){
+    var tokens=lex(text),stack=[],out=[];
+    if(!rejoinRoot)return tokens.filter(function(t){return t!==','&&t!==':';});
+    tokens.forEach(function(token,index){
+      if(token==='}'&&tokens[0]==='{'&&tokens[tokens.length-1]==='}'&&stack.length===1&&stack[0]==='{'){
+        var next=index+1;if(tokens[next]===',')next++;
+        if(tokens[next]&&tokens[next][0]==='"'&&tokens[next+1]===':')return;
+      }
+      if(token==='{'||token==='[')stack.push(token);
+      else if(token==='}'||token===']'){
+        if(stack.pop()!==(token==='}'?'{':'['))throw Error('原文嵌套括号不匹配，不能移动层级');
+      }
+      if(token!==','&&token!==':')out.push(token);
+    });
+    if(stack.length)throw Error('原文缺少闭合括号，不能补造尾部');
+    return out;
+  }
+  function edited(raw,edits,rejoinRoot){
     if(!Array.isArray(edits)||edits.length>80)throw Error('edits 数组无效');var last=raw.length+1,out=raw;
     edits.slice().sort(function(a,b){return b.start-a.start;}).forEach(function(e){
-      if(!Number.isInteger(e.start)||!Number.isInteger(e.end)||e.start<0||e.end<e.start||e.end>raw.length||e.end>=last||raw.slice(e.start,e.end)!==e.expected||!/^[\s,:]*$/.test(e.replacement))throw Error('只能凭精确位置修复结构分隔符，不可改变值或括号');
+      if(!Number.isInteger(e.start)||!Number.isInteger(e.end)||e.start<0||e.end<e.start||e.end>raw.length||e.end>=last||raw.slice(e.start,e.end)!==e.expected||!(rejoinRoot?/^[\s,:}]*$/:/^[\s,:]*$/).test(e.replacement))throw Error('只能按精确位置修复分隔符或已证实多余的顶层闭合括号，不可改变原值或嵌套层级');
       out=out.slice(0,e.start)+e.replacement+out.slice(e.end);last=e.start;
     });
-    var scalars=function(s){return lex(s).filter(function(t){return t!==','&&t!==':';});};
-    if(JSON.stringify(scalars(raw))!==JSON.stringify(scalars(out)))throw Error('修复改变了原值、顺序或结构层级');return out;
+    if(rejoinRoot)strict(out);
+    if(JSON.stringify(sourceAtoms(raw,rejoinRoot))!==JSON.stringify(sourceAtoms(out,false)))throw Error('修复改变了原值、顺序或结构层级');return out;
   }
   // SC1 has a legacy memory-table side channel. Certify its framing without
   // executing it; the unchanged raw response still reaches MemTables.
@@ -74,6 +93,16 @@
   function sourcePreserved(raw,result){
     if(!result||!result.parsed)return false;
     var source=unfence(raw),output=unfence(result.repaired?result.raw:JSON.stringify(result.parsed));
+    if(['json-first-fields','sc1-char-updates'].includes(result.deterministicNormalization)&&result.sourceRaw===raw){
+      if(result.truncated)return false;
+      var folded=normalizeJSON(raw);
+      if(folded.changed&&folded.raw===result.raw){
+        try{var original=strict(legacyTableEnvelope(folded.raw)||unfence(folded.raw));
+          return Object.keys(original).every(function(k){return Object.prototype.hasOwnProperty.call(result.parsed,k)&&JSON.stringify(original[k])===JSON.stringify(result.parsed[k]);});
+        }catch(_){return false;}
+      }
+      return false;
+    }
     try { if(!result.repaired){strict(source);return true;} } catch(_){}
     // Only the existing, completely framed side channel may follow the JSON.
     // Never certify a repaired/truncated response or discard any source bytes.
@@ -83,10 +112,54 @@
     }
     try {
       strict(output);
-      var atoms=function(text){return lex(text).filter(function(token){return token!==','&&token!==':';});};
-      return JSON.stringify(atoms(source))===JSON.stringify(atoms(output));
+      return JSON.stringify(sourceAtoms(source,true))===JSON.stringify(sourceAtoms(output,false));
     }catch(_){return false;}
   }
+  // Duplicate object members follow the owner's first-value policy. Array entries remain separate.
+  function normalizeJSON(raw){
+    raw=String(raw||'');
+    var duplicateFields=[];
+    try{
+      var text=legacyTableEnvelope(raw)||unfence(raw),tokens=lex(text,true),i=0,removals=[];
+      JSON.parse(text); // Validate syntax only; never use JSON.parse's last-key-wins value.
+      function value(depth,path,retained){
+        if(depth>100)throw Error('JSON 嵌套过深');
+        var token=tokens[i++];
+        if(token.token==='{'){
+          var keys=new Map(),separator=null;
+          if(tokens[i].token==='}'){i++;return;}
+          while(true){
+            var name=JSON.parse(tokens[i++].token);i++;
+            var first=keys.get(name),repeated=keys.has(name),start=tokens[i].start,fieldPath=path+'.'+name;
+            value(depth+1,fieldPath,retained&&!repeated);
+            var finish=tokens[i-1].end,literal=text.slice(start,finish);
+            if(repeated&&retained){
+              removals.push({start:separator.start,end:finish});
+              duplicateFields.push({path:fieldPath,field:name,policy:'first',keptRaw:first,ignoredRaw:literal,
+                identical:JSON.stringify(lex(first))===JSON.stringify(lex(literal))});
+            }else if(!repeated)keys.set(name,literal);
+            separator=tokens[i++];if(separator.token==='}')break;
+          }
+          return;
+        }
+        if(token.token==='['){
+          if(tokens[i].token===']'){i++;return;}
+          var index=0;
+          while(true){value(depth+1,path+'['+(index++)+']',retained);if(tokens[i++].token===']')break;}
+        }
+      }
+      value(0,'$',true);if(i!==tokens.length)throw Error('多个顶层值或尾随片段');
+      if(!removals.length)return {changed:false};
+      var folded=text;
+      removals.sort(function(a,b){return b.start-a.start;}).forEach(function(edit){folded=folded.slice(0,edit.start)+folded.slice(edit.end);});
+      strict(folded);
+      var offset=raw.indexOf(text);if(offset<0)throw Error('原文边界无法唯一定位');
+      var characterFields=duplicateFields.filter(function(row){return row.path==='$.char_updates';});
+      return {changed:true,raw:raw.slice(0,offset)+folded+raw.slice(offset+text.length),duplicateFields:duplicateFields,
+        occurrences:characterFields.length?characterFields.length+1:0,identicalArrays:characterFields.filter(function(row){return row.identical;}).length};
+    }catch(e){return {changed:false,reason:e.message,issues:[{code:'source-validation',field:e.field||'',path:e.path||'',message:e.message}]};}
+  }
+  function normalizeSC1(raw){return normalizeJSON(raw);}
   function beginNormal(opts){
     var out=TM.CallRetryPolicy?TM.CallRetryPolicy.options(opts):Object.assign({},opts||{});
     if(!out._normalRecoveryTicket&&!out._emergency&&!/^emergency:/.test(out.id||'')){
@@ -107,11 +180,24 @@
   }
   function markResponse(data,opts){if(data&&typeof data==='object'&&opts&&opts._normalRecoveryTicket)responseMeta.set(data,opts._normalRecoveryTicket);return data;}
   async function json(spec){
+    function normalized(parsed){return spec.normalizeParsed?spec.normalizeParsed(clone(parsed)):parsed;}
+    var folded=normalizeJSON(spec.raw);
+    if(folded.changed){
+      var parsed=normalized(strict(legacyTableEnvelope(folded.raw)||unfence(folded.raw)));
+      if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed)&&(!spec.validate||spec.validate(parsed)))return {ok:true,
+        value:{parsed:parsed,raw:folded.raw,sourceRaw:spec.raw,normalization:{policy:'first',duplicateFields:folded.duplicateFields}},
+        receipt:{id:spec.id||'json',kind:'json',calls:0,steps:0,repairs:0,verified:true,applied:false,deterministic:true,policy:'first',duplicateFields:folded.duplicateFields}};
+    }
     var raw=unfence(spec.raw),original;try{lex(raw);if(!raw.trim())return fail('empty-source');}catch(_){return fail('source-not-losslessly-repairable');}
     try{original=strict(raw);}catch(_){}
-    var adapter={contract:{kind:'json',edits:'{edits:[{start,end,expected,replacement}]}；只能改冒号、逗号和结构空白，所有原值和括号须保留。合法字段归一由原调用先处理；本工具不改字段名或业务值。',expectedKeys:spec.expectedKeys||[],sourceOffsets:'original 内的 UTF-16 下标；保留所有中段数据，不能补造尾部'},
+    if(original&&spec.normalizeParsed){
+      var projected=normalized(original);
+      if(projected&&typeof projected==='object'&&!Array.isArray(projected)&&(!spec.validate||spec.validate(projected)))return {ok:true,
+        value:{parsed:projected,raw:raw},receipt:{id:spec.id||'json',kind:'json',calls:0,steps:0,repairs:0,verified:true,applied:false,deterministic:true,policy:'field-aliases'}};
+    }
+    var adapter={contract:{kind:'json',edits:'{edits:[{start,end,expected,replacement}]}；只可改冒号、逗号和结构空白；唯一括号例外：顶层 } 后紧接逗号（可省）与字段名及冒号，且原文末尾有完整根闭合时，可删除该多余顶层 }。所有原键、原值、顺序和嵌套括号须保留，不可合并多个独立对象。expectedKeys 是候选字段，命中任意一个即可；合法别名由原解析器确定性归一，不要求补齐全部别名，本工具不新增字段或业务值。',expectedKeys:spec.expectedKeys||[],sourceOffsets:'original 内的 UTF-16 下标；保留所有中段数据，不能补造尾部'},
       preview:function(plan){try{
-        var changed=plan.normalize===true?raw:edited(raw,plan.edits),parsed=strict(changed);
+        var changed=plan.normalize===true?raw:edited(raw,plan.edits,true),parsed=normalized(strict(changed));
         if(plan.normalize===true)return fail('use-deterministic-normalization-first');
         if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))return fail('expected-object');
         if(spec.validate&&!spec.validate(parsed))return fail('original-schema-rejected');
@@ -216,5 +302,5 @@
   }
   function normalMeta(data){return data&&typeof data==='object'?responseMeta.get(data):null;}
   function claimNormal(opts){if(opts&&opts._normalRecoveryTicket)opts._normalRecoveryTicket.attempts++;}
-  TM.RecoveryAdapters={json:json,identity:identity,strict:strict,edited:edited,sourcePreserved:sourcePreserved,schemaOK:schemaOK,beginNormal:beginNormal,markResponse:markResponse,normalMeta:normalMeta,assertNormal:assertNormal,claimNormal:claimNormal};
+  TM.RecoveryAdapters={json:json,identity:identity,strict:strict,edited:edited,sourcePreserved:sourcePreserved,normalizeSC1:normalizeSC1,normalizeJSON:normalizeJSON,schemaOK:schemaOK,beginNormal:beginNormal,markResponse:markResponse,normalMeta:normalMeta,assertNormal:assertNormal,claimNormal:claimNormal};
 })(typeof window!=='undefined'?window:globalThis);

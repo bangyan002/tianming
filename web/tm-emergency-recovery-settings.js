@@ -10,11 +10,11 @@
     var grid=el('div');grid.style.cssText='display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:.6rem';box.appendChild(grid);var fields={};
     fields.mode=select(grid,'mode','失败后的应急策略',[['auto','自动修复可验证项（默认）'],['ask','每次失败后询问'],['off','关闭']],c.mode);
     fields.tier=select(grid,'tier','复核与应急模型',[['same','复核用主要 API；应急沿用原接口'],['primary','主要 API'],['secondary','次要 API（须已配置）']],c.tier);
-    [['maxCalls','每次复核／应急调用预算（次）',1],['maxRepairs','候选修订预算（次）',1],['maxSteps','工具步骤预算（步）',1],['reviewMaxTokens','固定复核 Token 预算（0 不设）',0],['maxTokens','失败后应急 Token 预算',1],['timeoutMs','复核／应急等待（秒，0 不设）',0]].forEach(function(row){
+    [['maxCalls','每次复核／应急调用预算（次）',1],['maxRepairs','候选修订预算（次）',1],['maxSteps','工具步骤预算（步）',1],['reviewMaxTokens','固定复核 Token 预算（0 不设）',0],['maxTokens','失败后应急 Token 预算（0 不设）',0],['timeoutMs','复核／应急等待（秒，0 不设）',0]].forEach(function(row){
       var label=el('label',row[1]),input=el('input');input.type='number';input.id='s-recovery-'+row[0];input.min=String(row[2]);input.step='1';input.value=String(row[0]==='timeoutMs'?c[row[0]]/1000:c[row[0]]);label.appendChild(input);label.style.cssText='display:flex;flex-direction:column;gap:.35rem';grid.appendChild(label);fields[row[0]]=input;
     });
     box.appendChild(el('p','主推演完成后正常保存并过回合，复核在后台继续；复核失败、超预算或辅助任务出错不会撤销已完成回合。补正通过正式写入和实际读回后另行保存。开始下一回合或切换存档时，旧复核停止写入。查证与修订计入实际接口用量。'));
-    box.appendChild(el('p','固定复核默认不设 Token 上限，完整原文阅读、查漏和修改后核验均计入实际接口用量。可自行填写正整数限制本次总量；0 表示不设上限。其他预算不设固定最大值，等待时间为 0 表示不设时限。'));
+    box.appendChild(el('p','固定复核与失败后应急默认均不设 Token 上限，完整原文阅读、查漏和修改后核验均计入实际接口用量。可分别填写正整数限制各自总量；0 表示不设 Token 上限。其他预算不设固定最大值，等待时间为 0 表示不设时限。'));
     var error=el('p');error.setAttribute('role','alert');error.style.color='var(--danger,#a33)';box.appendChild(error);
     var reset=el('button','恢复默认预算');reset.type='button';reset.addEventListener('click',function(){Object.keys(fields).forEach(function(k){if(k==='mode'||k==='tier')return;fields[k].value=String(k==='timeoutMs'?TM.EmergencyRecovery.defaults[k]/1000:TM.EmergencyRecovery.defaults[k]);});error.textContent='';});box.appendChild(reset);
     host.appendChild(box);draft={box:box,fields:fields,error:error};
@@ -44,6 +44,7 @@
     if(!panel){panel=el('aside');panel.id='tm-recovery-progress';panel.setAttribute('role','status');panel.style.cssText='position:fixed;right:1rem;bottom:1rem;max-width:min(32rem,90vw);z-index:2147483500;background:var(--bg,#222);color:var(--txt,#eee);padding:.8rem;border:1px solid #888;';document.body.appendChild(panel);}
     panel.replaceChildren();panel.appendChild(el('strong',(row.kind==='turn-review'?'回合复核 · ':'应急恢复 · ')+String(row.call)));
     panel.appendChild(el('div',row.detail||row.phase));panel.appendChild(el('small','额外调用 '+row.calls+(row.budget?'/'+row.budget.maxCalls:'')+' · 工具步骤 '+row.steps+' · 候选 '+row.repairs+' · 估算 Token '+(row.estimatedTokens||0)+(row.budget?'/'+(row.budget.maxTokens===0?'不设上限':row.budget.maxTokens):'')));
+    if(row.failureDetails&&row.failureDetails.length){var details=el('details');details.open=row.phase==='stopped';details.appendChild(el('summary','具体原因（'+row.failureDetails.length+'项）'));var list=el('div');list.style.cssText='max-height:14rem;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;';row.failureDetails.forEach(function(issue){list.appendChild(el('p',issue.message));});details.appendChild(list);panel.appendChild(details);}
     var stop=el('button',row.phase==='verified'||row.phase==='stopped'?'关闭提示':row.kind==='turn-review'?'取消回合复核':'取消应急恢复');stop.type='button';panel.appendChild(stop);
     stop.addEventListener('click',function(){if(row.phase!=='verified'&&row.phase!=='stopped')(row.kind==='turn-review'&&TM.RecoveryReview?TM.RecoveryReview.cancel(row.id):TM.EmergencyRecovery.cancel(row.id));else{panel.remove();panel=null;}});
   }

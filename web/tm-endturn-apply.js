@@ -4072,6 +4072,7 @@
                 NpcMemorySystem.remember(authorCh.name, _memText, _authorMood, _importance);
               }
             }
+            if (TM && TM.ImperialOrders) TM.ImperialOrders.bindWork(GM,work,w);
             GM.culturalWorks.push(work);
             // === 按动机应用差异化效果 ===
             var _mot = work.motivation;

@@ -1094,6 +1094,7 @@ async function _endTurnCore(options){
     }
     if (_reliability) _reliability.finish(_turnScope, 'failed', error);
     console.error('endTurn error:', error);
+    if (_reliability && _reliability.showFailure) _reliability.showFailure(error);
     if (error && error.code === 'SAVE_WRITE_UNCONFIRMED') {
       if (_turnTxn) _turnTxn.saveWriteUnconfirmed = true;
       if (_responseRecovery) _responseRecovery.finish(_turnTxn, 'unconfirmed', error);

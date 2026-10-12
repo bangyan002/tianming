@@ -35,8 +35,16 @@
     if(plan.role==='issue_paper'&&row.unit!=='贯')throw error('RECOVERY_UNIT_UNCONFIRMED','当前发行恢复尚无张、文等单位的面额或换算凭据，不能只复制数额后自动落账');
     return {role:plan.role,amount:row.amount,unit:row.unit,source:{start:row.start,end:row.end,literal:row.literal}};
   }
+  function quantityIssue(text,result){
+    var detail=result&&result.details||{},candidates=detail.candidates||[],reason=result&&result.message||result&&result.reason||'数量或单位无法唯一确定';
+    var message='诏令「'+String(text).slice(0,500)+'」：'+reason;
+    if(candidates.length)message+=' 候选数量：'+candidates.map(function(row){return (row.token||row.value)+(row.measure||row.unit||'')+'（数值 '+row.value+'）';}).join(' / ');
+    return {code:'edict-quantity',message:message};
+  }
   function register(text,result){
-    if(!root.GM||!result||result.ok||!result.amountError||!TM.EmergencyRecovery||TM.EmergencyRecovery.config().mode==='off')return false;
+    if(!root.GM||!result||result.ok||!result.amountError)return false;
+    var reliability=TM.Endturn&&TM.Endturn.Reliability;if(reliability&&reliability.noteFailure)reliability.noteFailure({code:'TM_EDICT_AMOUNT_INVALID',message:quantityIssue(text,result).message},{stage:'诏令数量解析'});
+    if(!TM.EmergencyRecovery||TM.EmergencyRecovery.config().mode==='off')return false;
     if(!result.classification||result.classification.typeKey!=='currency_reform')return false;
     var g=root.GM,rows=pending.get(g);if(!rows){rows=new Map();pending.set(g,rows);}
     var key=JSON.stringify([g._campaignId,g._timelineId,g.turn,text]);
@@ -51,7 +59,7 @@
       var guard=function(){if(pending.get(g)!==rows||!g._endTurnCommitPending||root.GM!==g||root.P!==player||root._tmLoadGen!==gen||g.turn!==row.turn||JSON.stringify([g._campaignId,g._timelineId,g.turn,row.text])!==row.key||ctx&&ctx.signal&&ctx.signal.aborted||TM.EmergencyRecovery.config().mode==='off'||moneyText(g)!==before)throw error('AI_STALE_WORLD','恢复依据或账本已改变，未重复执行');};
       var adapter={contract:{kind:'edict-quantity',proposal:'{role:"issue_paper|overseas_silver_flow",amount:{start:原文UTF16起点,end:终点,literal:"原数词"}}',rules:'只恢复原文唯一数量用途；纸币自动恢复须明确以贯计量，银流须以两计量，不猜面额或兑换率；原诏令全部保留，准备金或汇率不是发行量。无法证实时必须 needsPlayer。预检不执行发行。'},
         preview:function(plan){try{guard();return {ok:true,value:certified(row.text,plan),verification:'原文字面数额、用途和唯一性已核对；尚未修改钱粮'};}catch(e){return {ok:false,code:e.code,message:e.message};}}};
-      var recovered=await TM.EmergencyRecovery.recover({id:'edict_quantity',kind:'edict-quantity',raw:row.text,error:{code:'TM_EDICT_AMOUNT_INVALID'},normalExhausted:true,normalAttempts:1,safeBoundary:true,adapter:adapter,signal:ctx&&ctx.signal,guard:guard});
+      var recovered=await TM.EmergencyRecovery.recover({id:'edict_quantity',kind:'edict-quantity',raw:row.text,error:{code:'TM_EDICT_AMOUNT_INVALID',message:quantityIssue(row.text,row.result).message},failureDetails:[quantityIssue(row.text,row.result)],normalExhausted:true,normalAttempts:1,safeBoundary:true,adapter:adapter,signal:ctx&&ctx.signal,guard:guard});
       if(!recovered.ok){row.phase='deferred';if(recovered.error&&/^(AI_ABORTED|AI_STALE_WORLD|AI_REQUEST_DEADLINE)$/.test(recovered.error.code))throw recovered.error;receipts.push({ok:false,applied:false,reason:recovered.reason||'needs-player'});continue;}
       guard();var certificate=recovered.value,fp=await TM.AgentKernel.fingerprintScenario({text:row.text,turn:g.turn,campaign:g._campaignId,timeline:g._timelineId});guard();
       if(!fp)throw error('RECOVERY_FINGERPRINT','无法确认幂等标识，未执行');

@@ -2369,22 +2369,54 @@ SettlementPipeline.register('historyIndex', '历史索引', function() {
 //   · 限满按衙门解析主官（findOfficeByFunction）具本回奏，入御案时政
 //     （GM.memorials 每回合被 genMemorialsAI 整批重生成·机械直推必被冲掉·故走 S2 密探回禀同款通道）；
 //   · 回奏语气取自真实衙门状况：主官虚悬→逾期未奏（可补官/申饬）·主官离心(loyalty<40)→敷衍塞责·否则办讫覆奏。
+function _resolveDeptTaskOffice(dept) {
+  var hs = typeof TM !== 'undefined' && TM.OfficeHolderState;
+  if (!hs) return typeof findOfficeByFunction === 'function' ? findOfficeByFunction(dept) : null;
+  var pf = TM.TaxPolicy ? TM.TaxPolicy.player(GM) : {id:'',name:''};
+  var rows = hs.positions(GM).filter(function(a){
+    return !a.organizationId || a.organizationId === pf.id || a.organizationId === pf.name;
+  });
+  var matches = rows.filter(function(a){return a.node.id === dept || a.node.name === dept;});
+  if (!matches.length) matches = rows.filter(function(a){
+    return (a.node.functions || []).indexOf(dept) >= 0 || String(a.node.name || '').indexOf(dept) >= 0;
+  });
+  if (!matches.length) return null;
+  var nodes = matches.map(function(a){return a.node;}).filter(function(n,i,all){return all.indexOf(n) === i;});
+  if (nodes.length !== 1) return {dept:dept,holder:'',blockedReason:'承办衙门不唯一，须明确承办责任'};
+  var candidates = [], occupied = false;
+  matches.forEach(function(a){
+    if (a.pos.enabled === false || a.pos.status === 'abolished') return;
+    var state = hs.read(GM,a.pos); occupied = occupied || state.occupied;
+    state.characters.forEach(function(h){
+      var av = hs.availability(GM,h,a.pos);
+      if (av.char && av.char.alive !== false && !av.char.dead && av.capacity > 0) candidates.push({a:a,ch:av.char});
+    });
+  });
+  candidates.sort(function(a,b){
+    var rank = function(x){return typeof getRankLevel === 'function' ? getRankLevel(x.a.pos.rank) : parseInt(x.a.pos.rank,10) || 9;};
+    return rank(a)-rank(b);
+  });
+  var top = candidates[0];
+  return {dept:nodes[0].name,official:top ? top.a.pos.name : '',holder:top ? top.ch.name : '',
+    blockedReason:top ? '' : occupied ? '衙门有人在岗，但主官姓名、身份或履职状态尚未核实' : '该衙门主官虚悬'};
+}
 function _tickDeptTasksReply() {
   if (typeof P === 'undefined' || !P || !P.conf || P.conf.deptReplyEnabled !== true) return;
   if (typeof GM === 'undefined' || !GM || !GM.running || !Array.isArray(GM.deptTasks) || GM.deptTasks.length === 0) return;
   var turn = GM.turn || 0;
   var replied = 0;
   GM.deptTasks.forEach(function(t) {
-    if (!t || (t.status || 'pending') !== 'pending') return;
+    if (!t || ['pending','overdue'].indexOf(t.status || 'pending') < 0) return;
     if (t._replyTickTurn === turn) return; // 同回合幂等·防结算重入
     t._replyTickTurn = turn;
     if (t.dueIn == null) t.dueIn = 3;
-    t.dueIn -= 1;
+    if (t.status !== 'overdue') t.dueIn -= 1;
     if (t.dueIn > 0) return;
+    var off = null;
+    try { off = _resolveDeptTaskOffice(t.dept || ''); } catch (_) {}
+    if (t.status === 'overdue' && !(off && off.holder)) return; // 补官或身份修复后续奏；仍受阻不重复刷请罪。
     if (replied >= 3) return; // 每回合至多回奏3件·防旧档积压齐爆（余者下回合续报）
     replied++;
-    var off = null;
-    try { off = (typeof findOfficeByFunction === 'function') ? findOfficeByFunction(t.dept || '') : null; } catch (_) {}
     var holder = off && off.holder ? String(off.holder) : '';
     var deptName = (off && off.dept) || t.dept || '有司';
     var offTitle = (off && off.official) ? off.official : '主官';
@@ -2395,12 +2427,14 @@ function _tickDeptTasksReply() {
       t.status = 'overdue';
       t.overdueAtTurn = turn;   // 逾期戳·不盖 repliedAtTurn(逾期未奏≠已回奏·2026-07-16 字段语义修正)
       title = '有司逾期未奏 · ' + taskName;
-      desc = '前交' + deptName + '部议之「' + taskName + '」限期已满，而该衙门主官虚悬，竟无人具本回奏。部务积压若此，可补授主官，或下诏申饬督办。';
+      t.executionBlock = off && off.blockedReason || (off ? '该衙门主官虚悬' : '未找到承办衙门');
+      desc = '前交' + deptName + '部议之「' + taskName + '」限期已满，' + t.executionBlock + '，尚无人具名回奏。请核实承办责任、补官或下诏申饬督办。';
     } else {
       var ch = (typeof findCharByName === 'function') ? findCharByName(holder) : null;
       var slack = !!(ch && typeof ch.loyalty === 'number' && ch.loyalty < 40);
       t.status = 'replied';
       t.repliedAtTurn = turn;
+      delete t.executionBlock;
       if (slack) {
         title = '有司回奏 · ' + taskName + '（辞气含混）';
         desc = deptName + offTitle + holder + '就「' + taskName + '」具本回奏，然辞气含混，语多敷衍，所报难征。' + (brief ? '（原议：' + brief + '）' : '') + '若欲穷究其实，可下诏督办，或命科道核查。';

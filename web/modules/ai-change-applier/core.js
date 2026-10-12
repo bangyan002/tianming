@@ -3,6 +3,7 @@ import { _aiPolicyText, _aiPolicyAmount, _aiPolicyRegion, _aiPolicyRatioLabel, _
 /// <reference path="../../types.d.ts" />
 // Behavior-preserving core migrated from the former origin classic script.
 import { createFiscalPosting } from './fiscal-posting.js';
+import { officeUpdateIntent } from './office-update-intent.js';
 export function createCore(deps) {
   if (!deps || !deps.global) throw new Error('[AIChangeApplier] core dependencies missing');
   var global = deps.global;
@@ -1301,25 +1302,19 @@ export function createCore(deps) {
       if (!ch) { applied.failed.push({char_update: cu, reason: 'char not found'}); return; }
       // updates：任意字段
       if (cu.updates) {
-        // ★ 2026-09-18·officialTitle semantic reroute（修 char_updates.updates.officialTitle 全数 blocked）
-        // 病灶：prompt 教 AI 在 updates 里写 officialTitle 表升迁调动，但 pathutils BLOCKED_PATHS 把
-        //   chars.*.officialTitle 列为禁区（任职须走语义 sink），_mergeUpdatesToEntity 全数退回
-        //   "blocked update path: chars.0.officialTitle"——AI 每次想调动人事都失败。
-        // 正确姿势：抽出来走 _offAddCharOfficeTitle 语义通道（同 office_assignments 落账路径），
-        //   官职树/赶路人/镜像一条龙同步；position/post/title 留在原 updates 由 merge 消费。
-        if (cu.updates.officialTitle && typeof global._offAddCharOfficeTitle === 'function') {
-          var _newTitle = String(cu.updates.officialTitle || '').trim();
-          delete cu.updates.officialTitle;   // 从合并集合中剔除·走专属 sink 而非 generic merge
-          try {
-            var _offRes = global._offAddCharOfficeTitle(ch, _newTitle, { concurrent: false });
-            if (Array.isArray(_offRes) && _offRes.indexOf(_newTitle) >= 0) {
-              if (typeof global.addEB === 'function') global.addEB('任免', ch.name + ' 就任「' + _newTitle + '」（char_updates 路由）');
-              charUpdCount++;
-            } else {
-              applied.failed.push({ char_update: cu, reason: 'officialTitle sink no-op: ' + _newTitle });
-            }
-          } catch(_offAddE) {
-            applied.failed.push({ char_update: cu, reason: 'officialTitle sink failed: ' + ((_offAddE && _offAddE.message) || _offAddE) });
+        // Job recaps cannot replace an appointment. Formal transitions reuse the office writer.
+        if (Object.prototype.hasOwnProperty.call(cu.updates, 'officialTitle')) {
+          var _requestedTitle = cu.updates.officialTitle;
+          var _officeIntent = officeUpdateIntent(G, global, ch, cu, aiOutput, _requestedTitle);
+          delete cu.updates.officialTitle;
+          if (String(cu.updates.title || '').replace(/\s+/g, '') === String(_requestedTitle || '').replace(/\s+/g, '')) delete cu.updates.title;
+          if (_officeIntent.kind === 'appoint' || _officeIntent.kind === 'dismiss') {
+            var _officeResult = _officeIntent.kind === 'dismiss' ? onDismissal(ch.name, '明确人事变动') :
+              onAppointment(ch.name, _officeIntent.position, { concurrent:_officeIntent.concurrent, reason:cu.reason || '明确人事变动' });
+            if (_officeResult && _officeResult.ok) charUpdCount++;
+            else applied.failed.push({char_update:cu,reason:'office transition failed: '+(_officeResult && _officeResult.reason || '')});
+          } else if (_officeIntent.kind === 'recap' && typeof global.recordAIDiagnostic === 'function') {
+            global.recordAIDiagnostic('write_hint', {label:'官职概述未作任免',itemName:ch.name,field:'officialTitle',requested:_requestedTitle,current:ch.officialTitle});
           }
         }
         charUpdCount += _mergeUpdatesToEntity(ch, cu.updates, 'char_update', ch.name, cu.reason || '', applied.failed, aiOutput);   // 刀C·C3·透传 aiOutput 供敏感字段来源判据(结构化互证)

@@ -123,6 +123,9 @@ release-hot/.env.local
 
 release-hot/hot-latest.json
 
+# Local web SQLite, WAL, process state, and logs (may contain player API configuration).
+/.local-data/
+
 # Shared 2.5D runtime textures: required by fresh Pages checkouts.
 !web/vendor/shanhe25d/height.png
 !web/vendor/shanhe25d/albedo.webp

@@ -731,7 +731,7 @@ function _wdDoDirectOrder() {
 // ★2026-07-01 W4·交办追踪面板:GM._npcCommitments 数据早已结构化(进度/期限/意愿/复命/逾期兜底全齐)·但只散落进混排事件流·
 //   玩家答不出「手上压着几件差事·谁在拖·谁办砸」。此处纯读聚合成一个可视视图·零新状态·不碰执行闭环。
 function _wdCommitBuckets() {
-  var out = { active: [], overdue: [], done: [], failed: [] };
+  var out = { active: [], overdue: [], review: [], done: [], failed: [] };
   var _t = GM.turn || 0;
   var cm = GM._npcCommitments;
   if (!cm || typeof cm !== 'object') return out;
@@ -740,10 +740,12 @@ function _wdCommitBuckets() {
       if (!c || !c.task) return;
       var st = c.status || 'pending';
       var rec = { nm: nm, c: c };
+      if (typeof TM !== 'undefined' && TM.ImperialOrders && TM.ImperialOrders.awaitingReview(c)) { out.review.push(rec); return; }
       if (st === 'completed') { out.done.push(rec); return; }
       if (st === 'failed' || st === 'obstructed' || c._terminalSettled) { out.failed.push(rec); return; }
       var due = (Number.isFinite(c.assignedTurn) ? c.assignedTurn : (GM.turn || 0)) + (c.deadline || 3);   // ★codex-fix W4:assignedTurn 缺失/脏数据不按 T0 算(否则老存档误判逾期)   // pending/executing/delayed → 逾期 or 承办中
-      if (due < _t) out.overdue.push(rec); else out.active.push(rec);
+      var late = (typeof TM !== 'undefined' && TM.ImperialOrders) ? TM.ImperialOrders.timing(GM,c).overdue : due < _t;
+      if (late) out.overdue.push(rec); else out.active.push(rec);
     });
   });
   return out;
@@ -752,11 +754,11 @@ function _wdCommitRow(rec, kind) {
   var c = rec.c, nm = rec.nm, _t = GM.turn || 0;
   var prog = Math.max(0, Math.min(100, parseInt(c.progress, 10) || 0));
   var due = (c.assignedTurn || 0) + (c.deadline || 3);
-  var left = due - _t;
+  var left = (typeof TM !== 'undefined' && TM.ImperialOrders) ? TM.ImperialOrders.timing(GM,c).leftTurns : due - _t;
   var willPct = Math.round((parseFloat(c.willingness) || 0.6) * 100);
   var barColor = kind === 'overdue' ? 'var(--red-400,#c0392b)' : kind === 'done' ? 'var(--green-400,#3a9a5c)' : kind === 'failed' ? 'var(--txt-s,#8a8578)' : 'var(--gold-500)';
   var statusLabel = (typeof TM!=='undefined'&&TM.ImperialOrders)?TM.ImperialOrders.label(c):'';
-  var dueLabel = kind === 'done' ? '已履约' : kind === 'failed' ? '已终结' : (left < 0 ? ('逾期 ' + (-left) + ' 回合') : left === 0 ? '本回合到期' : ('尚余 ' + left + ' 回合'));
+  var dueLabel = kind === 'review' ? '待朕验收' : kind === 'done' ? '已履约' : kind === 'failed' ? '已终结' : (left < 0 ? ('逾期 ' + (-left) + ' 回合') : left === 0 ? '本回合到期' : ('尚余 ' + left + ' 回合'));
   var promise = c.npcPromise ? ('<span style="color:var(--txt-s);">「' + escHtml(String(c.npcPromise).slice(0, 20)) + '」</span>') : '';
   var fb = c.feedback ? ('<div style="color:var(--txt-s);font-size:0.7rem;margin-top:2px;">复命：' + escHtml(String(c.feedback).slice(0, 64)) + '</div>') : '';
   // ★2026-07-01 打磨·失败归因徽标(为何办砸:推诿/无能/被掣肘/阳奉阴违·AI 报或确定性兜底)
@@ -769,10 +771,11 @@ function _wdCommitRow(rec, kind) {
     + '<div style="display:flex;align-items:center;gap:6px;">'
     + '<div style="flex:1;background:var(--bg-4);height:5px;border-radius:3px;overflow:hidden;"><div style="background:' + barColor + ';width:' + prog + '%;height:100%;"></div></div>'
     + '<span style="font-size:0.66rem;color:var(--txt-s);white-space:nowrap;">' + prog + '%·意愿' + willPct + '</span></div>'
-    + _frBadge + fb + (c.verificationStatus==='pending_review'?'<button class="bt bsm" data-task-id="'+escHtml(c.id)+'" onclick="tmAcceptImperialTask(this.dataset.taskId)">核验交办</button>':'')
-    + '<details><summary>交办原文与凭据</summary><div style="white-space:pre-wrap;word-break:break-word">'+escHtml(c.task)+'\n'+escHtml((c.evidenceRefs||[]).map(function(r){return r.id;}).join('、')||'尚无完成凭据')+'</div></details></div>';
+    + _frBadge + fb + (c.verificationStatus==='pending_review'?'<button class="bt bsm" data-task-id="'+escHtml(c.id)+'" onclick="tmAcceptImperialTask(this.dataset.taskId)">验收通过</button><button class="bt bsm" data-task-id="'+escHtml(c.id)+'" onclick="tmReturnImperialTask(this.dataset.taskId)">退回补办</button>':'')
+    + '<details><summary>交办原文、复命与凭据</summary><div style="white-space:pre-wrap;word-break:break-word">'+escHtml(c.task)+'\n'+escHtml((c.completionReport&&c.completionReport.feedback)||c.feedback||'尚未复命')+'\n'+escHtml((c.evidenceRefs||[]).map(function(r){return r.id;}).join('、')||(typeof TM!=='undefined'&&TM.ImperialOrders?TM.ImperialOrders.resultText(c):'')||c.executionBlock||(kind==='review'?'待朕核对结果并验收':'尚未取得完成凭据'))+'</div></details></div>';
 }
 function _wdShowCommitTracker() {
+  if (!GM.busy && typeof TM !== 'undefined' && TM.ImperialOrders) TM.ImperialOrders.tick(GM);
   var b = _wdCommitBuckets();
   function section(title, arr, kind, color, cap) {
     if (!arr.length) return '';
@@ -780,12 +783,13 @@ function _wdShowCommitTracker() {
     return '<div style="margin-bottom:8px;"><div style="font-size:0.72rem;color:' + color + ';font-weight:600;border-bottom:1px solid var(--bg-4);padding-bottom:2px;margin-bottom:2px;">' + title + '（' + arr.length + '）</div>'
       + shown.map(function(r){ return _wdCommitRow(r, kind); }).join('') + '</div>';
   }
-  var body = section('⚠ 逾期未办', b.overdue, 'overdue', 'var(--red-400,#c0392b)')
+  var body = section('待朕验收', b.review, 'review', 'var(--gold-400)')
+    + section('⚠ 逾期未办', b.overdue, 'overdue', 'var(--red-400,#c0392b)')
     + section('▸ 承办中', b.active, 'active', 'var(--gold-400)')
     + section('✓ 已复命', b.done, 'done', 'var(--green-400,#3a9a5c)', 10)
     + section('✕ 失诺·搁置', b.failed, 'failed', 'var(--txt-s,#8a8578)', 10);
   if (!body) body = '<div style="color:var(--txt-s);font-size:0.78rem;text-align:center;padding:16px 4px;">尚无交办事项。可在问对中面谕「差遣」·或对臣工下达具体指令·所交办之事将在此追踪其进度与复命。</div>';
-  var total = b.overdue.length + b.active.length;
+  var total = b.overdue.length + b.active.length + b.review.length;
   var existing=document.getElementById('tm-imperial-tracker');if(existing)existing.remove();
   var bg = document.createElement('div');bg.id='tm-imperial-tracker';
   bg.style.cssText = 'position:fixed;inset:0;z-index:1300;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;';

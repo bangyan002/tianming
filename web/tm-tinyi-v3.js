@@ -2387,9 +2387,10 @@ function _ty3_phase1_openSeating(topic, meta) {
 
   function _ty3_isEligibleOfficial(c) {
     if (!c || c.alive === false || c.isPlayer) return false;
+    if (typeof _ty2_isServingOfficial === 'function' && !_ty2_isServingOfficial(c)) return false;
     if (c._imprisoned || c._exiled || c._retired || c._fled || c._mourning || c._captured) return false;
     if (c._sick && (c.health || 50) <= 20) return false;
-    var rawTitle = c.officialTitle || c.title || '';
+    var rawTitle = c.officialTitle !== undefined ? c.officialTitle : c.title || '';
     if (!rawTitle) return false;
     if (typeof _ty3_isHaremTitle === 'function' && _ty3_isHaremTitle(rawTitle)) return false;
     if (typeof _isAtCapital === 'function' && !_isAtCapital(c)) return false;
@@ -2412,7 +2413,7 @@ function _ty3_phase1_openSeating(topic, meta) {
     return;
   }
 
-  if (!proposerName) {
+  if (!proposerName || !attendees.some(function(c){return c.name === proposerName;})) {
     proposerCh = attendees.slice().sort(function(a, b) { return (b.prestige || 50) - (a.prestige || 50); })[0];
     proposerName = proposerCh ? proposerCh.name : '';
     proposerParty = proposerCh && proposerCh.party ? proposerCh.party : '';

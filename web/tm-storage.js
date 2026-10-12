@@ -298,6 +298,21 @@ var TM_SaveDB = (function() {
    * JSON is frozen synchronously before compression/checksum cross an async boundary.
    */
   function createCanonicalPayload(state, identity) {
+    // Background world saves use detached state. Freeze it synchronously via
+    // postMessage, then serialize/compress/checksum away from the UI thread.
+    if (identity && String(identity.transactionId || '').indexOf('background:') === 0
+        && typeof window !== 'undefined' && window.TMServerStorage
+        && typeof window.TMServerStorage.createCanonicalPayload === 'function') {
+      var backgroundPayload = window.TMServerStorage.createCanonicalPayload(state, identity);
+      if (backgroundPayload) return _perfWithSpan('save.backgroundPayload', function() {
+        return backgroundPayload.then(function(payload) {
+          _perfCount('save.stringify.count', 1); _perfCount('save.compress.count', 1);
+          _perfCount('save.stringify.bytes', payload.jsonByteLength);
+          _perfCount('save.compressed.bytes', payload.compressedByteLength);
+          return payload;
+        });
+      }, identity);
+    }
     var json = _perfWithSpan('save.stringify', function() { return JSON.stringify(state); }, identity || {});
     if (typeof json !== 'string') return Promise.reject(new Error('canonical world state is not serializable'));
     var utf8Bytes = _perfWithSpan('save.utf8', function() {

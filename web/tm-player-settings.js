@@ -152,16 +152,15 @@ function _renderModelProbePanel(tier) {
   }
 
   // 当前生效值·按 tier 读
-  var manualCtx = cfg['contextSizeK' + _sfx] || 0;
   var manualOut = cfg['maxOutputTokens' + _sfx] || 0;
-  var effCtxK = (typeof getModelContextSizeK === 'function') ? getModelContextSizeK(isSec ? 'secondary' : 'primary') : (manualCtx || detCtx || wlCtxK || 256);
-  var effCtxSource = manualCtx ? '手动覆写' : (detCtx ? layer : (wlCtxK ? '白名单参考' : '未测定·预算回退'));
+  var effCtxK = (typeof getModelContextSizeK === 'function') ? getModelContextSizeK(isSec ? 'secondary' : 'primary') : 1024;
+  var effCtxSource = '固定预算';
   var effOutTok = manualOut || measOut || detOut || (wlOutK * 1024) || 0;
   h += '<div style="margin-top:0.5rem;padding:0.4rem;background:rgba(107,176,124,0.08);border-left:3px solid var(--celadon-400);border-radius:3px;font-size:0.72rem;">';
   h += '\u2713 \u5F53\u524D\u751F\u6548\uFF1A\u4E0A\u4E0B\u6587 <b>' + effCtxK + 'K</b> <span style=\"color:var(--txt-d);\">(' + escHtml(effCtxSource) + ')</span>\u00B7\u8F93\u51FA\u4E0A\u9650 <b>' + (effOutTok ? effOutTok+' tokens' : '\u6A21\u578B\u81EA\u7531') + '</b>';
-  if (manualCtx || manualOut) h += ' <span style="color:var(--gold);">(\u624B\u52A8\u8986\u5199)</span>';
+  if (manualOut) h += ' <span style="color:var(--gold);">(\u624B\u52A8\u8986\u5199)</span>';
   h += '</div>';
-  h += '<div style="margin-top:0.35rem;color:var(--txt-d);font-size:0.71rem;">能力判断优先级：手动覆写 ＞ 实测输出/API探测 ＞ 白名单 ＞ 自报。自报不直接决定生效值。</div>';
+  h += '<div style="margin-top:0.35rem;color:var(--txt-d);font-size:0.71rem;">上下文预算固定为1024K；输出上限优先级：手动覆写 ＞ 实测输出/API探测 ＞ 白名单 ＞ 自报。自报不直接决定生效值。</div>';
   h += '</div>';
   return h;
 }

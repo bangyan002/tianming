@@ -21,6 +21,7 @@ const RUNTIME_SOURCE_EXPANSIONS = Object.freeze({
   'generated/tm-ai-change-applier.bundle.js': [
     'modules/ai-change-applier/context.js',
     'modules/ai-change-applier/core.js',
+    'modules/ai-change-applier/office-update-intent.js',
     'modules/ai-change-applier/validators.js',
     'modules/ai-change-applier/reconcile.js',
     'modules/ai-change-applier/legacy-adapter.js',

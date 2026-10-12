@@ -705,8 +705,8 @@ openSettings=function(){
     "<div class=\"rw\"><div class=\"fd\"><label>\u5730\u5740\uFF08Base URL\u00B7\u670D\u52A1\u5546\u7684\u63A5\u53E3\u7F51\u5740\uFF09</label><input id=\"s-url\" value=\""+(_sAiVirgin()?"":(P.ai.url||""))+"\" placeholder=\"\u5982 https://api.deepseek.com/v1\uFF0C\u4E00\u822C\u4EE5 /v1 \u7ED3\u5C3E\"></div><div class=\"fd\"><label>Model_ID</label><input id=\"s-model\" value=\""+(_sAiVirgin()?"":escHtml(P.ai.model||""))+"\" placeholder=\"ep-......\u4E0D\u662FLLM\u540D\u79F0\"></div></div>"+
     '<div style="font-size:0.72rem;color:var(--txt-d);line-height:1.6;margin:-0.3rem 0 0.4rem;">\u4E09\u680F\u5185\u5BB9\u90FD\u6765\u81EA\u4F60\u6CE8\u518C\u7684\u670D\u52A1\u5546\uFF1A\u5730\u5740\u89C1\u5176\u6587\u6863\u300CAPI \u63A5\u53E3 / Base URL\u300D\uFF0CModel_ID \u89C1\u5176\u300C\u6A21\u578B\u5217\u8868\u300D\uFF08\u6CE8\u610F\uFF1A\u4E2A\u522B\u670D\u52A1\u5546\u586B\u7684\u4E0D\u662F\u6A21\u578B\u540D\u2014\u2014\u5982\u706B\u5C71\u65B9\u821F\u7528\u63A8\u7406\u63A5\u5165\u70B9\u7684\u73A9\u5BB6\u8981\u586B <b>ep- \u5F00\u5934\u7684\u63A5\u5165\u70B9 ID</b>\uFF0C\u9009\u4E2D\u65B9\u821F\u9884\u8BBE\u4F1A\u6709\u8BE6\u7EC6\u63D0\u793A\uFF09\u3002\u652F\u6301 OpenAI \u517C\u5BB9\u4E2D\u8F6C\u7AD9\uFF0C\u5730\u5740\u586B\u5176 base URL \u5373\u53EF\uFF1B\u6CA1\u5217\u8FDB\u9884\u8BBE\u7684\u670D\u52A1\u53EA\u8981\u63D0\u4F9B OpenAI \u517C\u5BB9\u63A5\u53E3\uFF0C\u624B\u52A8\u586B\u5730\u5740\u4E5F\u80FD\u901A\uFF08\u552F\u4E00\u4F8B\u5916\u662F Azure OpenAI\uFF0C\u8DEF\u5F84\u7ED3\u6784\u7279\u6B8A\uFF0C\u6682\u4E0D\u652F\u6301\uFF09\u3002</div>'+
     '<div style="font-size:0.72rem;color:var(--txt-d);line-height:1.6;margin:-0.1rem 0 0.5rem;">\u5B89\u5168\u8BBE\u5B9A\uFF1A\u8BC1\u4E66\u6821\u9A8C\u59CB\u7EC8\u4E25\u683C\u542F\u7528\uFF0C\u8BC1\u4E66\u65E0\u6548\u7684\u4E2D\u8F6C\u7AD9\u4F1A\u88AB\u62D2\u7EDD\u3002</div>'+
-    "<div class=\"rw\"><div class=\"fd q\"><label>Temp</label><input type=\"number\" id=\"s-temp\" value=\""+(_sAiVirgin()?"":(P.ai.temp||0.8))+"\" step=\"0.1\" placeholder=\"\u9ED8\u8BA4 0.8\"></div><div class=\"fd q\"><label>\u8BB0\u5FC6</label><input type=\"number\" id=\"s-mem\" value=\""+(_sAiVirgin()?"":(P.ai.mem||20))+"\" placeholder=\"\u9ED8\u8BA4 20\"></div><div class=\"fd q\"><label>\u4E0A\u4E0B\u6587(K)</label><input type=\"number\" id=\"s-ctx\" value=\""+((P.conf.contextSizeK||0)>0?P.conf.contextSizeK:"")+"\" placeholder=\"\u7559\u7A7A=\u81EA\u52A8\" min=\"0\" title=\"\u6A21\u578B\u4E0A\u4E0B\u6587\u7A97\u53E3\u5927\u5C0F(K tokens)\u3002\u7559\u7A7A\u62160=\u81EA\u52A8\u68C0\u6D4B\"></div></div>"+
-    "<div style=\"font-size:0.7rem;color:var(--txt-d);margin:-0.2rem 0 0.3rem;\">\u4E0A\u4E0B\u6587\u7A97\u53E3\u5F71\u54CD\u8BB0\u5FC6\u538B\u7F29\u7B56\u7565\uFF1A128K+\u5BBD\u677E\u4FDD\u7559\u3001<32K\u6FC0\u8FDB\u538B\u7F29\u3001\u7559\u7A7A\u81EA\u52A8\u8BC6\u522B\u6A21\u578B</div>"+
+    "<div class=\"rw\"><div class=\"fd q\"><label>Temp</label><input type=\"number\" id=\"s-temp\" value=\""+(_sAiVirgin()?"":(P.ai.temp||0.8))+"\" step=\"0.1\" placeholder=\"\u9ED8\u8BA4 0.8\"></div><div class=\"fd q\"><label>\u8BB0\u5FC6</label><input type=\"number\" id=\"s-mem\" value=\""+(_sAiVirgin()?"":(P.ai.mem||20))+"\" placeholder=\"\u9ED8\u8BA4 20\"></div><div class=\"fd q\"><label>\u4E0A\u4E0B\u6587(K)</label><input type=\"number\" id=\"s-ctx\" value=\"1024\" readonly title=\"上下文预算固定为1024K\"></div></div>"+
+    "<div style=\"font-size:0.7rem;color:var(--txt-d);margin:-0.2rem 0 0.3rem;\">上下文预算固定为1024K，记忆压缩策略按此计算。</div>"+
     "<div style=\"display:flex;gap:0.3rem;margin-top:0.4rem;\"><button class=\"bt bs bsm\" onclick=\"sTestConn()\">\u6D4B\u8BD5\u8FDE\u63A5</button><button class=\"bt bs bsm\" onclick=\"sReDetectCtx()\">\u91CD\u65B0\u63A2\u6D4B\u7A97\u53E3</button><button class=\"bt bp bsm\" onclick=\"sSaveAPI()\">\u4FDD\u5B58</button></div>"+
     "<div id=\"s-status\" style=\"font-size:0.78rem;color:var(--txt-d);margin-top:0.3rem;\"></div>"+
     "<div id=\"s-ctx-info\" style=\"font-size:0.72rem;color:var(--txt-d);margin-top:0.2rem;\"></div>"+
@@ -1279,10 +1279,10 @@ openSettings=function(){
     "<span style=\"font-size:0.71rem;color:var(--txt-d);margin-left:0.5rem;\">手动覆写 schema 裁剪策略</span>"+
     "</div></div>"+
     "<div class=\"rw\" style=\"margin-top:0.4rem;\">"+
-    "<div class=\"fd q\"><label>上下文覆写 K</label><input type=\"number\" id=\"s-ctx-override\" min=\"0\" value=\""+(P.conf.contextSizeK||0)+"\" placeholder=\"0=自动\" style=\"width:90px;\"></div>"+
+    "<div class=\"fd q\"><label>上下文预算 K（固定）</label><input type=\"number\" id=\"s-ctx-override\" value=\"1024\" readonly style=\"width:90px;\"></div>"+
     "<div class=\"fd q\"><label>max_tokens 覆写</label><input type=\"number\" id=\"s-out-override\" min=\"0\" value=\""+(P.conf.maxOutputTokens||0)+"\" placeholder=\"0=自动\" style=\"width:110px;\"></div>"+
     "</div>"+
-    "<div style=\"font-size:0.71rem;color:var(--txt-d);margin-top:0.3rem;line-height:1.5;\">均留空或 0 = 走自动探测。下方【保存所有设置】按钮一并生效。</div>"+
+    "<div style=\"font-size:0.71rem;color:var(--txt-d);margin-top:0.3rem;line-height:1.5;\">上下文预算固定为1024K；max_tokens 留空或 0 = 走自动探测。下方【保存所有设置】按钮一并生效。</div>"+
     "</div>"+
 
     "<div class=\"settings-section\"><h4>\u6A21\u578B\u80FD\u529B\u6821\u9A8C</h4>"+
@@ -1389,13 +1389,11 @@ function _sShowCtxInfo() {
   var el = _$('s-ctx-info'); if (!el) return;
   var model = escHtml(P.ai.model || '(未设置)');
   var k = getModelContextSizeK();
-  var layer = P.conf._ctxDetectLayer || '未探测';
-  var manual = (P.conf.contextSizeK && P.conf.contextSizeK > 0);
   var wl = _matchModelCtx(P.ai.model || '');
-  var html = '<span style="color:var(--gold);">当前上下文窗口: <b>' + k + 'K</b></span>';
+  var html = '<span style="color:var(--gold);">当前上下文预算: <b>' + k + 'K</b></span>';
   html += ' · 模型: ' + model;
-  html += ' · 来源: ' + (manual ? '手动设置' : layer);
-  if (wl > 0 && !manual) html += ' · 白名单参考: ' + wl + 'K';
+  html += ' · 来源: 固定预算';
+  if (wl > 0) html += ' · 白名单参考: ' + wl + 'K';
   // 最近探测日志（2026-07-10 改显示进服务窗：此前 <details> 在本行=模型信息栏内联展开·日志把模型那栏顶掉——改点击后渲染进 s-status 服务窗·再点收起）
   if (typeof _ctxDetectLog !== 'undefined' && _ctxDetectLog.length > 0) {
     html += ' · <a href="javascript:void(0)" onclick="_sShowDetectLog()" style="color:var(--gold);cursor:pointer;">探测日志(' + _ctxDetectLog.length + '条)</a>';

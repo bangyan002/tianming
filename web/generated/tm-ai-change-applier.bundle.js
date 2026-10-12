@@ -387,6 +387,61 @@
     }, readStock, writeStock, regionResource, identity, findPosted, syncStatements };
   }
 
+  // web/modules/ai-change-applier/office-update-intent.js
+  var rows = (value) => Array.isArray(value) ? value : [];
+  var title = (value) => String(value == null ? "" : value).replace(/\s+/g, "").trim();
+  var officeActions = /^(appoint|appointment|transfer|concurrent|dismiss|dismissal|remove|retire)$/;
+  function sameActor(row, ch) {
+    const id = row && (row.characterId || row.charId);
+    return !!row && (id ? String(id) === String(ch.id) : [row.name, row.character, row.charName].includes(ch.name));
+  }
+  function delivered(g, e) {
+    return !/^(pending_delivery|cancelled|revoked|rejected|failed)$/.test(e.status || "") && !rows(e._letterIds).some((id) => {
+      const letter = rows(g.letters).find((l) => l && l.id === id);
+      return !letter || !["delivered", "returned", "replying"].includes(letter.status);
+    });
+  }
+  function sameOffice(root, requested, position) {
+    if (title(requested) === title(position)) return true;
+    if (typeof root._offResolveSeat !== "function") return false;
+    const requestedSeat = root._offResolveSeat("", requested), sourceSeat = root._offResolveSeat("", position);
+    return !!requestedSeat && !!sourceSeat && requestedSeat.pos === sourceSeat.pos;
+  }
+  function officeUpdateIntent(g, root, ch, update, output, requested) {
+    for (const field of ["office_assignments", "appointments", "personnel_changes"]) {
+      if (rows(output[field]).some((row) => sameActor(row, ch) && officeActions.test(String(row.action || row.type || "appoint"))))
+        return { kind: "structured" };
+    }
+    const wanted = title(requested);
+    if (wanted === title(ch.officialTitle)) return { kind: "unchanged" };
+    const turn = Number(g.turn) || 0, sources = [];
+    rows(g.edicts).forEach((e) => {
+      if (e && Number(e.turn) === turn && e.status === "promulgated" && delivered(g, e)) sources.push(e.text || e.content || "");
+    });
+    rows(g._edictTracker).forEach((e) => {
+      if (e && (Number(e.turn) === turn || Number(e.lastSubmittedTurn) === turn) && delivered(g, e)) sources.push(e.content || "");
+    });
+    if (typeof root.extractEdictActions === "function") {
+      for (const source of sources) {
+        let parsed;
+        try {
+          parsed = root.extractEdictActions(source);
+        } catch (_) {
+          continue;
+        }
+        const assignment = rows(parsed.appointments).find((a) => sameActor(a, ch) && sameOffice(root, wanted, a.position));
+        if (assignment) return { kind: "appoint", position: assignment.position, concurrent: !!assignment.concurrent };
+        if (!wanted && rows(parsed.dismissals).some((a) => sameActor(a, ch))) return { kind: "dismiss" };
+      }
+    }
+    const event = update.careerEvent || {}, action = String(event.action || event.type || event.kind || "");
+    const post = event.post || event.newPosition || event.position;
+    if (/^(appoint|appointment|transfer|concurrent)$/.test(action) && wanted && title(post) === wanted)
+      return { kind: "appoint", position: post, concurrent: action === "concurrent" || event.concurrent === true };
+    if (!wanted && /^(dismiss|dismissal|remove|retire)$/.test(action)) return { kind: "dismiss" };
+    return { kind: "recap" };
+  }
+
   // web/modules/ai-change-applier/core.js
   function createCore(deps) {
     if (!deps || !deps.global) throw new Error("[AIChangeApplier] core dependencies missing");
@@ -1697,19 +1752,17 @@
           return;
         }
         if (cu.updates) {
-          if (cu.updates.officialTitle && typeof global._offAddCharOfficeTitle === "function") {
-            var _newTitle = String(cu.updates.officialTitle || "").trim();
+          if (Object.prototype.hasOwnProperty.call(cu.updates, "officialTitle")) {
+            var _requestedTitle = cu.updates.officialTitle;
+            var _officeIntent = officeUpdateIntent(G, global, ch, cu, aiOutput, _requestedTitle);
             delete cu.updates.officialTitle;
-            try {
-              var _offRes = global._offAddCharOfficeTitle(ch, _newTitle, { concurrent: false });
-              if (Array.isArray(_offRes) && _offRes.indexOf(_newTitle) >= 0) {
-                if (typeof global.addEB === "function") global.addEB("任免", ch.name + " 就任「" + _newTitle + "」（char_updates 路由）");
-                charUpdCount++;
-              } else {
-                applied.failed.push({ char_update: cu, reason: "officialTitle sink no-op: " + _newTitle });
-              }
-            } catch (_offAddE) {
-              applied.failed.push({ char_update: cu, reason: "officialTitle sink failed: " + (_offAddE && _offAddE.message || _offAddE) });
+            if (String(cu.updates.title || "").replace(/\s+/g, "") === String(_requestedTitle || "").replace(/\s+/g, "")) delete cu.updates.title;
+            if (_officeIntent.kind === "appoint" || _officeIntent.kind === "dismiss") {
+              var _officeResult = _officeIntent.kind === "dismiss" ? onDismissal(ch.name, "明确人事变动") : onAppointment(ch.name, _officeIntent.position, { concurrent: _officeIntent.concurrent, reason: cu.reason || "明确人事变动" });
+              if (_officeResult && _officeResult.ok) charUpdCount++;
+              else applied.failed.push({ char_update: cu, reason: "office transition failed: " + (_officeResult && _officeResult.reason || "") });
+            } else if (_officeIntent.kind === "recap" && typeof global.recordAIDiagnostic === "function") {
+              global.recordAIDiagnostic("write_hint", { label: "官职概述未作任免", itemName: ch.name, field: "officialTitle", requested: _requestedTitle, current: ch.officialTitle });
             }
           }
           charUpdCount += _mergeUpdatesToEntity(ch, cu.updates, "char_update", ch.name, cu.reason || "", applied.failed, aiOutput);
@@ -5982,7 +6035,7 @@
       });
       return out;
     }
-    function _tmStrictIdentity(rows, ref, kind, field, index, failures, opts) {
+    function _tmStrictIdentity(rows2, ref, kind, field, index, failures, opts) {
       opts = opts || {};
       function fail(payload) {
         if (Array.isArray(opts.identityFields) && opts.identityFields.length) payload.identityFields = opts.identityFields.slice();
@@ -5993,11 +6046,11 @@
         fail({ field, index, code: "missing-required-field", target: "", retryable: true, reason: kind + " reference is missing" });
         return null;
       }
-      if (!Array.isArray(rows)) {
+      if (!Array.isArray(rows2)) {
         fail({ field, index, code: kind + "-collection-unavailable", target: raw, retryable: false, reason: kind + " collection is unavailable" });
         return null;
       }
-      var byId = rows.filter(function(row) {
+      var byId = rows2.filter(function(row) {
         return row && row.id != null && String(row.id).trim() === raw;
       });
       if (byId.length === 1) return byId[0];
@@ -6005,7 +6058,7 @@
         fail({ field, index, code: "ambiguous-reference", target: raw, retryable: true, reason: kind + " id is not unique" });
         return null;
       }
-      var byName = rows.filter(function(row) {
+      var byName = rows2.filter(function(row) {
         return row && row.name != null && String(row.name).trim() === raw;
       });
       if (byName.length === 1) return byName[0];
@@ -6044,13 +6097,13 @@
       });
     }
     function _tmStrictRegionRows(G) {
-      var rows = [];
+      var rows2 = [];
       var seen = [], identities = /* @__PURE__ */ new Set();
       function add(row) {
         if (!row || typeof row !== "object" || seen.indexOf(row) >= 0) return;
         seen.push(row);
         var identity = row.id != null && row.name != null ? JSON.stringify([String(row.id), String(row.name)]) : null;
-        if (identity === null || !identities.has(identity)) rows.push(row);
+        if (identity === null || !identities.has(identity)) rows2.push(row);
         if (identity !== null) identities.add(identity);
         if (Array.isArray(row.children)) row.children.forEach(add);
         if (Array.isArray(row.subs)) row.subs.forEach(add);
@@ -6064,7 +6117,7 @@
       if (G && G.adminHierarchy && typeof G.adminHierarchy === "object") Object.keys(G.adminHierarchy).forEach(function(key) {
         add(G.adminHierarchy[key]);
       });
-      return rows;
+      return rows2;
     }
     function _tmValidateFiniteFields(root, path, failures, seen) {
       if (!root || typeof root !== "object") return;
@@ -6160,10 +6213,10 @@
         _tmPreflightSideEffects = previousSideEffects;
         _tmPreflightContext = previousContext;
       }
-      function validateRefs(field, rows, kind, refOf, extra) {
+      function validateRefs(field, rows2, kind, refOf, extra) {
         (Array.isArray(detached[field]) ? detached[field] : []).forEach(function(item, index) {
           var ref = refOf(item || {});
-          var entity = _tmStrictIdentity(rows, ref, kind, field, index, failures);
+          var entity = _tmStrictIdentity(rows2, ref, kind, field, index, failures);
           if (entity && extra) extra(item, entity, index);
         });
       }
@@ -6451,10 +6504,10 @@
       if (opts && opts._deferNarrativeRepairs === true) return failures;
       _AI_VALIDATOR_LOG_KEYS.forEach(function(key) {
         var known = baseline[key] instanceof Set ? baseline[key] : /* @__PURE__ */ new Set();
-        var rows = Array.isArray(G && G[key]) ? G[key].filter(function(row) {
+        var rows2 = Array.isArray(G && G[key]) ? G[key].filter(function(row) {
           return !known.has(row);
         }) : [];
-        rows.forEach(function(row) {
+        rows2.forEach(function(row) {
           if (!row || Number(row.turn || 0) !== Number(G && G.turn || 0)) return;
           var details = [];
           var fields = ["missing", "skipped", "errors"];

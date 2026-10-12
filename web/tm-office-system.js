@@ -472,6 +472,7 @@ function _offAddCharOfficeTitle(ch, title, opts) {
   ch.officialTitles = _offUniqueTitles([main].concat(concurrent));
   ch.concurrentTitles = concurrent;
   ch.concurrentTitle = concurrent.join('、');
+  ch.title = main + (concurrent.length ? '·兼' + concurrent.join('、') : '');
   return ch.officialTitles;
 }
 

@@ -1113,31 +1113,12 @@ async function listAvailableModels(opts) {
 }
 
 /**
- * 获取当前模型的上下文窗口大小（同步版本，使用缓存）
- * 如果尚未得到可确认上限，返回256K预算值；这不是模型能力检测结果。
+ * 获取游戏固定的上下文预算（主要与次要 API 共用）
+ * 上下文预算固定为1024K，不受手动设置、探测缓存或模型目录影响。
  * @returns {number} K tokens
  */
 function getModelContextSizeK(tier) {
-  tier = tier || 'primary';
-  var player = typeof P !== 'undefined' && P || {}, conf = player.conf || {}, ai = player.ai || {};
-  var suffix = tier === 'secondary' ? '_secondary' : '';
-  var cfg = ai;
-  if (tier === 'secondary' && ai.secondary && ai.secondary.key && ai.secondary.url) cfg = ai.secondary;
-  var manual = Number(conf['contextSizeK' + suffix]);
-  if (Number.isFinite(manual) && manual > 0) return manual;
-  var model = String(cfg.model || '').trim();
-  var currentKey = model + '@' + String(cfg.url || '');
-  var detected = Number(conf['_detectedContextK' + suffix]);
-  var k = conf['_ctxDetectionVersion' + suffix] === _CTX_DETECTION_VERSION
-    && conf['_ctxCacheKey' + suffix] === currentKey
-    && Number.isFinite(detected) && detected > 0 ? detected : 0;
-  try {
-    if (typeof _matchModelCtx === 'function') {
-      var known = Number(_matchModelCtx(model));
-      if (Number.isFinite(known) && known > k) k = known;
-    }
-  } catch (_) {}
-  return k > 0 ? k : 256;
+  return 1024;
 }
 
 /**
@@ -1211,7 +1192,7 @@ function _charRangeScaled(category, ratio) {
 }
 
 function getCompressionParams(ctxK) {
-  var k = ctxK || getModelContextSizeK();
+  var k = getModelContextSizeK();
 
   // 连续缩放而非阶梯式——任何上下文大小都能得到合理参数
   // 基准：32K = scale 1.0

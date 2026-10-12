@@ -36,15 +36,73 @@ function create(g,name,text,opts){
  if(root.NpcMemorySystem)root.NpcMemorySystem.remember(ch.name,'奉命：'+text,'敬',7,'天子',{type:'commitment',source:'witnessed',sourceRefs:c.sourceRefs,taskId:c.id});
  g._continuityRevision=(Number(g._continuityRevision)||0)+1;return {ok:true,task:c};
 }
+function timing(g,c){
+ var span=days(g),due=Number.isFinite(c.dueDay)?c.dueDay:
+ Math.max(0,(Number.isFinite(c.assignedTurn)?c.assignedTurn:Number(g.turn)||0)-1)*span+(Number(c.deadline)||3)*span;
+ var left=due-day(g);return {dueDay:due,leftDays:left,leftTurns:left<0?-Math.ceil(-left/span):Math.ceil(left/span),overdue:left<0};
+}
+function awaitingReview(c){return !!c&&c.status!=='cancelled'&&c.verificationStatus==='pending_review';}
+function personnelProof(g,c){
+ var HS=TM.OfficeHolderState;if(!HS)return null;
+ var text=String(c.sourceText||c.task||'').replace(/\s+/g,''),requirements=[],refs=[],supported=true;
+ var chars=arr(g.chars).filter(alive),names=chars.map(ch=>ch.name).filter(Boolean).sort((a,b)=>b.length-a.length);
+ if(!names.length)return null;
+ var rx=names.map(n=>n.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|');
+ var appoint=new RegExp('^(?:任命|擢升|擢任|擢拜|改任|起用|起复|授任|着任|特命|特授|命|授|擢|拜)('+rx+')(?:为|出任|担任|兼任|加兼|兼|任)(.+)$');
+ var remove=new RegExp('^(?:原任|现任)?('+rx+')(?:着免|免职|罢免|革职|着革|罢黜)$');
+ var removeFirst=new RegExp('^(?:免去|罢免|免职|革职|撤职|着免)('+rx+')$');
+ text.split(/[，,。；;·\n]/).filter(Boolean).forEach(s=>{
+  if(/^(?:官员任命|人事任免|任免)$/.test(s))return;
+  var m=s.match(appoint),d=s.match(remove)||s.match(removeFirst);
+  if(m)requirements.push({kind:'appoint',name:m[1],title:m[2]});
+  else if(d)requirements.push({kind:'dismiss',name:d[1]});else supported=false;
+ });
+ if(!supported||!requirements.length)return null; // A personnel receipt cannot cover a second, unrelated obligation.
+ var pf=TM.TaxPolicy.player(g),rows=HS.positions(g).filter(r=>
+ !r.organizationId||r.organizationId===pf.id||r.organizationId===pf.name);
+ var seats=[];
+ for(var r of requirements){
+  var ch=chars.filter(ch=>ch.name===r.name);if(ch.length!==1)return {ok:false,refs:[],reason:'任免对象身份尚未核实'};ch=ch[0];
+  if(r.kind==='appoint'){
+   var hits=rows.filter(a=>{
+    var n=String(a.node.name||'').replace(/\s+/g,''),p=String(a.pos.name||'').replace(/\s+/g,'');
+    return a.pos.enabled!==false&&a.pos.status!=='abolished'&&(r.title===p||r.title===n+p);
+   });
+   if(hits.length!==1||!HS.read(g,hits[0].pos).holders.some(h=>h.char===ch))
+    return {ok:false,refs:[],reason:r.name+'尚未实际就任指定官职，须核对官制任职记录'};
+   seats.push(hits[0]);refs.push({type:'office_assignment',id:hits[0].pos.id||hits[0].key,actorId:ch.id,taskId:c.id});
+  }
+ }
+ for(var r of requirements.filter(r=>r.kind==='dismiss')){
+  var ch=chars.find(ch=>ch.name===r.name),check=seats.length?seats:rows;
+  if(!check.length||check.some(a=>HS.read(g,a.pos).holders.some(h=>h.char===ch)))
+   return {ok:false,refs:[],reason:r.name+'仍在原任官职，免职尚未落实'};
+  refs.push({type:'office_dismissal',id:'dismissal:'+c.id+':'+ch.id,actorId:ch.id,taskId:c.id});
+ }
+ return {ok:true,refs:refs};
+}
+function resultText(c){
+ return arr(c.executionEvidence).map(e=>e.label+'：'+(['applied','unchanged','partial'].includes(e.status)?
+ e.visibility==='reported'?'已记入相关账目':JSON.stringify(e.before)+' → '+JSON.stringify(e.after):e.note||'尚待落实')).join('\n');
+}
+function bindWork(g,work,input){
+ var id=input&&(input.taskId||input._taskId);if(!id||!work||!work.id||!String(work.content||work.text||'').trim())return false;
+ var matches=all(g).filter(x=>x.c.id===id&&x.c.category==='write'&&x.c.status!=='cancelled'&&
+ alive(x.actor)&&x.actor.name===work.author&&Number(work.turn)>=Number(x.c.assignedTurn));
+ if(matches.length!==1)return false;work._taskId=id;work._taskActorId=matches[0].actor.id||'';return true;
+}
 function verified(g,c){
  if(!c||c.status==='cancelled')return {ok:false,refs:[],reason:'原交办已撤回'};
  if(c.playerAcceptance&&c.playerAcceptance.taskId===c.id)return {ok:true,refs:[c.playerAcceptance]};
  var receipts=arr(g.fiscalConfig&&g.fiscalConfig.taxPolicies).filter(p=>
   arr(c.taxReceiptIds).includes(p.id)&&p.sourceId==='task:'+c.id||p.sourceId===c.sourceId&&p.sourceId.indexOf('edict:')===0);
  if(receipts.length&&TM.TaxPolicy.coversTask&&TM.TaxPolicy.coversTask(g,c.task))return {ok:true,refs:receipts.map(p=>({type:'tax_policy',id:p.id,taskId:c.id}))};
- var works=arr(g.culturalWorks).filter(w=>w&&w._taskId===c.id&&(w.content||w.text));
- if(c.category==='write'&&works.length)return {ok:true,refs:works.map(w=>({type:'written_work',id:w.id,taskId:c.id}))};
- return {ok:false,refs:[],reason:'尚无与本项交办绑定的执行凭据'};
+ var ch=actor(g,c,'');
+ var works=arr(g.culturalWorks).filter(w=>w&&w._taskId===c.id&&alive(ch)&&w.author===ch.name&&
+ (!w._taskActorId||w._taskActorId===ch.id)&&Number(w.turn)>=Number(c.assignedTurn)&&String(w.content||w.text||'').trim());
+ if(c.category==='write'&&works.length&&!/(?:并|及|同时|另|且)(?:命[^，。；]{0,20})?(?:修建|修复|兴建|免除|征收|出兵|拨|发放|任命|罢免|调遣)/.test(c.task))return {ok:true,refs:works.map(w=>({type:'written_work',id:w.id,taskId:c.id}))};
+ var personnel=personnelProof(g,c);if(personnel)return personnel;
+ return {ok:false,refs:[],reason:'此类结果须由朕核对承办反馈并验收；尚无自动核验凭据'};
 }
 function label(c){return c.status==='cancelled'?'原命已撤回':c.verificationStatus==='legacy_unverified'?'旧记录称完成·未核验':c.verificationStatus==='pending_review'?'承办自报完成·待核验':c.status==='completed'?'已核验完成':c.status==='failed'?'未完成·已逾期':c.status==='delayed'?'逾期或受阻':'承办中';}
 function memorialRecord(r){return {id:r.id,from:r.from,title:'交办复命：'+r.content.split('\n')[0].slice(0,35),subject:'交办复命',summary:r.content,content:r.content,type:'report',category:'政务',turn:r.turn,status:'pending',read:false,_taskId:r.taskId,_taskReportId:r.id,_taskLedgerGenerated:true};}
@@ -77,7 +135,8 @@ function report(g,name,c,reason){
  var ch=actor(g,c,name),live=alive(ch),from=live?ch.name:'有司';
  var id='task-report:'+c.id+':'+(g._imperialReports.filter(r=>r.taskId===c.id).length+1);
  var text='交办复命｜'+c.task+'\n状态：'+label(c)+'。\n'+
- (c.verificationStatus==='verified'?'已核对执行凭据：'+arr(c.evidenceRefs).map(r=>r.id).join('、')+'。':'尚未取得可验证的完成凭据，不据此认定实际功成。')+
+ (c.verificationStatus==='verified'?'已核对执行凭据：'+arr(c.evidenceRefs).map(r=>r.id).join('、')+'。':
+ arr(c.executionEvidence).length?'本次执行记录：'+resultText(c)+'。交办整体结果待朕验收。':'交办整体结果尚待核验，可查阅承办反馈后验收或退回补办。')+
  (c.feedback?'\n承办反馈（自述）：'+c.feedback:'\n截至本次核验，没有新的承办反馈。')+
  (!live?'\n原承办人已故、失联或不在名册，须另行指定责任人。':'');
  var channel=live&&(/传书|鸿雁|来函/.test(c.task)||(ch.location&&ch.location!==(g._capital||'京城')))?'letter':/面奏|请见|问对/.test(c.task)&&live?'audience':'memorial';
@@ -85,27 +144,37 @@ function report(g,name,c,reason){
  g._imperialReports.push(rec);deliver(g,rec);c.reportState=rec.state;c.lastReportId=id;
  if(root.addEB)root.addEB('交办复命',from+'：'+label(c)+'（'+(channel==='letter'?'已交驿递':channel==='audience'?'已请见':'已呈奏疏')+'）');
 }
+function syncSourceEdict(g,c){
+ if(!String(c.sourceId||'').startsWith('edict:'))return;
+ var e=arr(g._edictTracker).find(e=>'edict:'+e.id===c.sourceId);if(!e||['cancelled','revoked','rejected'].includes(e.status))return;
+ var linked=all(g).filter(x=>x.c.sourceId===c.sourceId),done=linked.length&&linked.every(x=>x.c.verificationStatus==='verified');
+ e.verificationStatus=done?'verified':linked.some(x=>awaitingReview(x.c))?'pending_review':'pending';
+ if(done){e.status='completed';e.progressPercent=100;e.verifiedAtTurn=Number(g.turn)||0;}
+ else if(e.status==='completed'||e.verificationStatus==='pending_review')e.status='executing';
+}
 function update(g,name,c,u){
  if(!c||!u||c.status==='cancelled'||c._terminalSettled&&c.verificationStatus==='verified')return;
  var ch=actor(g,c,name);if(!alive(ch)){c.executionBlock='原承办人不可继续执行';report(g,name,c,'actor-unavailable');return;}
  if(c.actorId&&u.npcName&&u.npcName!==ch.name)return;
+ var proof=verified(g,c),wantsComplete=u.status==='completed'||u.consequenceType==='success';
  var fingerprint=JSON.stringify(u),turn=Number(g.turn)||0;
  if(c._updateTurn!==turn){c._updateTurn=turn;c._updateKeys=[];}
- if(arr(c._updateKeys).includes(fingerprint))return;c._updateKeys.push(fingerprint);
+ if(arr(c._updateKeys).includes(fingerprint)&&!(wantsComplete&&proof.ok&&c.verificationStatus!=='verified'))return;c._updateKeys.push(fingerprint);
  var progress=u.progressPercent!=null?Number(u.progressPercent):u.progress!=null?Number(u.progress):
  u.progress_delta!=null?(Number(c.progress)||0)+Number(u.progress_delta):Number(c.progress)||0;
  if(Number.isFinite(progress))c.progress=Math.max(0,Math.min(100,progress));
- c.lastUpdateTurn=turn;if(typeof u.feedback==='string')c.feedback=u.feedback.slice(0,8000);
+ c.lastUpdateTurn=turn;c.lastUpdateDay=day(g);if(typeof u.feedback==='string')c.feedback=u.feedback.slice(0,8000);
  c.schemaVersion=2;if(!c.actorId)c.actorId=ch.id||'';
- var wantsComplete=u.status==='completed'||u.consequenceType==='success',proof=verified(g,c);
+ // A new receipt or player acceptance can settle a previously deduplicated claim in the same turn.
  if(wantsComplete&&proof.ok){
-  c.status='completed';c.progress=100;c.verificationStatus='verified';c.evidenceRefs=proof.refs;
+  c.status='completed';c.progress=100;c.verificationStatus='verified';c.evidenceRefs=proof.refs;c.overdue=false;delete c._failReason;
   c._terminalSettled=true;c._terminalSettledTurn=turn;c._terminalSettledKind='verified_completed';
  }else if(wantsComplete){
   c.status='executing';c.verificationStatus='pending_review';c._terminalSettled=false;
-  c.executionBlock=proof.reason;c.reportedComplete=true;
+  c.executionBlock=proof.reason;c.reportedComplete=true;c.overdue=false;delete c._failReason;
+  c.completionReport={turn:turn,day:day(g),feedback:c.feedback||'承办人称已完成，未说明具体结果。',progress:c.progress};
  }else if(u.status==='failed'||u.status==='obstructed'||u.consequenceType==='abandoned'){
-  c.status='failed';c.verificationStatus='reported_failure';c._terminalSettled=true;
+  c.status='failed';c.verificationStatus='reported_failure';c._terminalSettled=true;c.reportedComplete=false;
   c._terminalSettledTurn=turn;c._failReason=String(u.failReason||'承办人报告未能完成');
  }else if(['pending','executing','delayed'].includes(u.status))c.status=u.status;
  if(root.NpcMemorySystem&&(c.feedback||wantsComplete)){
@@ -114,6 +183,7 @@ function update(g,name,c,u){
    '平',7,'天子',{type:'task_report',source:accepted?'witnessed':'reported',credibility:accepted?95:55,
     taskId:c.id,factStatus:accepted?'verified':'unverified_claim',sourceRefs:accepted?c.evidenceRefs:c.sourceRefs});
  }
+ syncSourceEdict(g,c);
  if(wantsComplete||c.status==='failed'||c.feedback)report(g,ch.name,c,wantsComplete?'completion':'progress');
  g._continuityRevision=(Number(g._continuityRevision)||0)+1;
 }
@@ -169,17 +239,24 @@ function tick(g){
    if(c.verificationStatus!=='verified')c.verificationStatus=c.verificationStatus||'legacy_unverified';
    if(c.schemaVersion===2&&!c.lastReportId)report(g,x.name,c,'completion');return;
   }
-  if(c.status==='failed')return;
   var proof=verified(g,c);
+  if(c.status==='failed'){
+   if(c.verificationStatus!=='unverified_lapsed'||!c.reportedComplete&&!proof.ok)return;
+   c.status='executing';c._terminalSettled=false;c.overdue=false;delete c._failReason;
+   delete c._terminalSettledTurn;delete c._terminalSettledKind;
+   c.verificationStatus='pending_review';c.reviewRecovered=true;
+   report(g,x.name,c,'review-recovered');
+  }
   if(proof.ok){
    update(g,x.name,c,{status:'completed',feedback:c.feedback||'已查见与本项命令绑定的执行凭据'});return;
   }
+  if(awaitingReview(c)){c.overdue=false;return;} // A submitted result awaits the player's decision, not another NPC deadline.
   if(today>=c.dueDay){
    c.overdue=true;c.status='delayed';
-   var last=Number.isFinite(c.lastUpdateTurn)?Math.max(0,c.lastUpdateTurn-1)*days(g):c.assignedDay||0;
+   var last=Number.isFinite(c.lastUpdateDay)?c.lastUpdateDay:Number.isFinite(c.lastUpdateTurn)?Math.max(0,c.lastUpdateTurn-1)*days(g):c.assignedDay||0;
    if(today>c.dueDay+2*days(g)&&today-last>2*days(g)){
-    c.status='failed';c._terminalSettled=true;c._failReason='逾期未提交可核验的结果';
-    c.verificationStatus='unverified_lapsed';
+    c.status='failed';c._terminalSettled=true;c._failReason='逾期未复命';
+    c.verificationStatus='report_lapsed';
    }
    report(g,x.name,c,c.status==='failed'?'lapsed':'overdue');
   }
@@ -191,11 +268,19 @@ function context(g,name){
  .slice(0,12).map(x=>'['+x.c.id+'] '+x.c.task+'；'+label(x.c)+'；进度为承办自报'+(Number(x.c.progress)||0)+'%；'+
  '复命状态：'+(x.c.reportState||'未报告')+'；期限第'+x.c.dueDay+'日'+(x.c.feedback?'；反馈：'+x.c.feedback:'')).join('\n');
 }
-function guardEdict(g,feedback) {
- if(!feedback||feedback.status!=='completed'||!feedback.edictId)return feedback;
+function guardEdict(g,feedback,effects) {
+ if(!feedback||!feedback.edictId)return feedback;
  var linked=all(g).filter(x=>x.c.sourceId==='edict:'+feedback.edictId);
  var tracker=arr(g._edictTracker).find(e=>e.id===feedback.edictId);
  if(tracker&&['cancelled','revoked','rejected'].includes(tracker.status))return Object.assign({},feedback,{status:tracker.status,completionVerified:false});
+ if(Array.isArray(effects))linked.forEach(x=>{
+  x.c.executionEvidence=effects.filter(e=>e&&arr(e.edictIds).includes(feedback.edictId)&&e.visibility!=='hidden').map(e=>({
+   type:'edict_effect',id:e.ref,taskId:x.c.id,label:e.label||'执行记录',status:e.status,visibility:e.visibility,
+   before:e.visibility==='reported'?null:e.before,after:e.visibility==='reported'?null:e.after,note:e.note||''}));
+ });
+ if(['pending','executing','delayed','completed','failed','obstructed'].includes(feedback.status))
+  linked.forEach(x=>update(g,x.name,x.c,feedback));
+ if(feedback.status!=='completed')return feedback;
  var proofs=TM.TaxPolicy.receipts(g,'edict:'+feedback.edictId);
  if(!linked.length&&!proofs.length)return feedback;
  var ok=linked.length?linked.every(x=>verified(g,x.c).ok):proofs.length>0;
@@ -206,19 +291,33 @@ function acceptByPlayer(g,id){
  if(g.busy)return false;
  var found=all(g).filter(x=>x.c.id===id);
  if(found.length!==1||!alive(found[0].actor))return false;
- var c=found[0].c;if(c.status==='cancelled')return false;
+ var c=found[0].c;if(!awaitingReview(c))return false;
  c.playerAcceptance={id:'player-acceptance:'+id,taskId:id,type:'player_review',turn:Number(g.turn)||0};
  update(g,found[0].name,c,{status:'completed',feedback:c.feedback||'御前验收通过'});
  return c.verificationStatus==='verified';
 }
+function returnByPlayer(g,id){
+ if(g.busy)return false;var found=all(g).filter(x=>x.c.id===id);
+ if(found.length!==1||!alive(found[0].actor)||!awaitingReview(found[0].c))return false;
+ var c=found[0].c;c.verificationStatus='pending';c.reportedComplete=false;c.status='executing';
+ c._terminalSettled=false;c.overdue=false;delete c._failReason;delete c.executionBlock;
+ c.lastUpdateTurn=Number(g.turn)||0;c.lastUpdateDay=day(g);c.dueDay=day(g)+2*days(g);
+ c.feedback='御前退回补办：请补充具体结果，限两回合再复命。';c.reviewReturnedAtTurn=c.lastUpdateTurn;
+ g._continuityRevision=(Number(g._continuityRevision)||0)+1;syncSourceEdict(g,c);report(g,found[0].name,c,'review-returned');return true;
+}
 TM.ImperialOrders={create:create,all:all,update:update,updates:updates,fromDialogue:fromDialogue,
  tick:tick,ingestEdicts:ingestEdicts,verified:verified,context:context,label:label,guardEdict:guardEdict,
- mergeMemorials:mergeMemorials,acceptByPlayer:acceptByPlayer,refreshReports:refreshReports};
+ mergeMemorials:mergeMemorials,acceptByPlayer:acceptByPlayer,returnByPlayer:returnByPlayer,refreshReports:refreshReports,
+ awaitingReview:awaitingReview,timing:timing,bindWork:bindWork,resultText:resultText};
 root.tmAcceptImperialTask=function(id){
  if(!root.GM||typeof root.confirm!=='function')return false;
  if(!root.confirm('确认已核对本项交办的执行结果？验收不会凭空改变税制、钱粮或军队。'))return false;
  var ok=acceptByPlayer(root.GM,id);
  if(ok&&typeof root._wdShowCommitTracker==='function')root._wdShowCommitTracker();
  return ok;
+};
+root.tmReturnImperialTask=function(id){
+ if(!root.GM||typeof root.confirm!=='function'||!root.confirm('退回此项复命，命承办人补充结果并于两回合内再奏？'))return false;
+ var ok=returnByPlayer(root.GM,id);if(ok&&typeof root._wdShowCommitTracker==='function')root._wdShowCommitTracker();return ok;
 };
 })(typeof window!=='undefined'?window:globalThis);

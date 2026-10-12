@@ -388,7 +388,7 @@ function _ogpRenderPosCard(p, deptName, pathArr) {
   var _sealCls = _rankLvl <= 6 ? '' : _rankLvl <= 12 ? ' mid-lvl' : ' low-lvl';
   var holder = p.holder ? (GM.chars||[]).find(function(c){return c && c.name === p.holder;}) : null;
   var isVacant = !holder;
-  var pathStr = JSON.stringify(pathArr);
+  var pathStr = escHtml(JSON.stringify(pathArr));
   var safeDept = escHtml(deptName||'').replace(/'/g,"\\'");
   var safePos = escHtml(p.name||'').replace(/'/g,"\\'");
   var safeHolder = escHtml(p.holder||'').replace(/'/g,"\\'");
@@ -501,18 +501,18 @@ function _renderOfficeTreeList(container) {
   // 识别皇帝节点（若有）与部门列表（按 court+subTab 过滤）
   var emperor = null;
   var depts = [];
-  tree.forEach(function(d){
+  tree.forEach(function(d, idx){
     if (d && (d.isEmperor || d.type === 'emperor' || /^\u7687\u5E1D|^\u5929\u5B50|^\u671D\u5EF7$/.test(d.name||''))) { emperor = d; return; }
     var cls = (typeof _officeClassifyDept === 'function') ? _officeClassifyDept(d) : { court:'central', group:'sijian' };
     if (cls.court !== courtKey) return;
     if (subTab !== 'all' && cls.group !== subTab) return;
-    depts.push(d);
+    depts.push({ node:d, index:idx });
   });
 
   // 当前 subTab 计数·供筛选条
   var totalPos = 0, totalFil = 0, totalVac = 0;
-  depts.forEach(function(d){
-    var r = _officeCountDept(d);
+  depts.forEach(function(entry){
+    var r = _officeCountDept(entry.node);
     totalPos += r.posCount; totalFil += r.filCount; totalVac += r.vacCount;
   });
 
@@ -583,12 +583,13 @@ function _renderOfficeTreeList(container) {
 
   // 部门横列 + 展开面板（同一 grid·panel 用 grid-column:1/-1 占满）
   var bodyHtml = '<div class="ogp-dept-row">';
-  depts.forEach(function(d, idx){
-    var key = JSON.stringify([idx + (emperor?1:0)]);
-    var isOpen = GM._officeCollapsed[key] === true;
+  depts.forEach(function(entry){
+    var d = entry.node, idx = entry.index;
+    var key = JSON.stringify([idx]);
+    var isOpen = !GM._officeCollapsed[key];
     var cnt = _officeCountDept(d);
     var seal = (d.name||'?').charAt(0);
-    bodyHtml += '<div class="ogp-dept' + (isOpen?' expanded':'') + '" onclick="toggleListDept(' + (idx + (emperor?1:0)) + ')">'
+    bodyHtml += '<div class="ogp-dept' + (isOpen?' expanded':'') + '" onclick="toggleListDept(' + idx + ')">'
       + '<span class="chev">\u25BE</span>'
       + '<span class="seal">' + escHtml(seal) + '</span>'
       + '<div class="nm">' + escHtml(d.name||'?') + '</div>'
@@ -599,9 +600,10 @@ function _renderOfficeTreeList(container) {
   // 面板在同一 grid 外·插到 grid 底部
   bodyHtml += '</div>';
   // 独立展开面板（每个打开的部门一个 panel）
-  depts.forEach(function(d, idx){
-    var key = JSON.stringify([idx + (emperor?1:0)]);
-    var isOpen = GM._officeCollapsed[key] === true;
+  depts.forEach(function(entry){
+    var d = entry.node, idx = entry.index;
+    var key = JSON.stringify([idx]);
+    var isOpen = !GM._officeCollapsed[key];
     if (!isOpen) return;
     var cnt = _officeCountDept(d);
     var positionsHtml = '';
@@ -614,7 +616,7 @@ function _renderOfficeTreeList(container) {
       (node.subs||[]).forEach(function(sub, si){
         _emit(sub, pathArr.concat(['subs', si]));
       });
-    })(d, [idx + (emperor?1:0)]);
+    })(d, [idx]);
 
     bodyHtml += '<div class="ogp-panel open">'
       + '<div class="title">\u3014<b>' + escHtml(d.name||'?') + '</b>\u3015<small>\u7F16 ' + cnt.posCount + ' \u00B7 \u5B9E ' + cnt.filCount + (cnt.vacCount>0?(' \u00B7 \u7A7A ' + cnt.vacCount):'') + '</small></div>'
@@ -781,6 +783,7 @@ function _ogPartyClass(p) {
 /** v2 helper：渲染部门卡 */
 function _ogRenderDeptCard(fi, idx, NW, cardH, pathStr) {
   var nd = fi.node;
+  pathStr = escHtml(pathStr);
   var isEmperor = fi.depth === 0;
   var isRoot1 = fi.depth === 1;
   var depthCls = isEmperor ? 'depth-0' : (isRoot1 ? 'depth-1' : '');
@@ -1451,7 +1454,7 @@ function _ogRenderDeptCardV10(fi, courtKey) {
   var actual = psCount - vac;
   var seal = (nd.seal || (nd.name||'\u00B7').replace(/\s/g,'').slice(0,1));
   var themeCls = courtKey === 'inner' ? ' theme-inner' : (courtKey === 'region' ? ' theme-region' : '');
-  var pathJSON = JSON.stringify(fi.path);
+  var pathJSON = escHtml(JSON.stringify(fi.path));
   var collapsed = !!fi.collapsed;
   var style = 'left:' + fi.x + 'px;top:' + fi.y + 'px;width:' + fi.w + 'px;height:' + fi.h + 'px;';
   var toggleCall = 'GM._officeCollapsed[JSON.stringify(' + pathJSON + ')]=!GM._officeCollapsed[JSON.stringify(' + pathJSON + ')];renderOfficeTree();';

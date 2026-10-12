@@ -42,6 +42,24 @@ function _ty2_cancelSetup() {
   else if (bg) bg.remove();
 }
 
+function _ty2_isServingOfficial(c) {
+  if (!c || c.alive === false || c.dead || c.isPlayer || c._revoked && c._revoked.neverReappoint) return false;
+  var hs = typeof TM !== 'undefined' && TM.OfficeHolderState;
+  if (hs) {
+    var info = GM.playerInfo || (typeof P !== 'undefined' && P.playerInfo) || {};
+    var fac = (GM.facs || []).find(function(f){return f && (f.id === info.factionId || f.name === info.factionName);});
+    var own = GM.startContext && GM.startContext.playerFactionId || fac && fac.id || info.factionId || '';
+    var name = fac && fac.name || info.factionName || '';
+    var active = hs.activeAssignments(GM,c).filter(function(a){return !a.organizationId || a.organizationId === own || a.organizationId === name;});
+    if (active.length) return true;
+    var posts = GM.postSystem && GM.postSystem.posts || [];
+    if (posts.some(function(p){return p && p.status !== 'abolished' && (p.holderId ? p.holderId === c.id : p.holder === c.name);})) return true;
+    if (hs.positions(GM).some(function(a){return !a.organizationId || a.organizationId === own || a.organizationId === name;})) return false;
+  }
+  // Legacy worlds without an office inventory still distinguish an explicit dismissal from an authored title.
+  var title = c.officialTitle !== undefined ? c.officialTitle : c.title;
+  return !!title && !/^(?:原任|前任|免职|罢官|罢免|致仕|闲居)/.test(String(title));
+}
 function _ty2_openSetup() {
   try {
   if (typeof _cy_isModeBlockedByFrequency === 'function' && _cy_isModeBlockedByFrequency('tinyi')) return false;
@@ -66,6 +84,7 @@ function _ty2_openSetup() {
   function _cannotAttend(c) {
     if (!c) return true;
     if (c.alive === false || c.dead) return true;
+    if (!_ty2_isServingOfficial(c)) return true;
     if (c.isPlayer) return true;
     if (c._imprisoned || c.imprisoned || c._inPrison || c._jailed || c._inJail) return true;
     if (c._exiled || c.exiled || c._banished) return true;
@@ -201,7 +220,8 @@ async function _ty2_startSession() {
   var selected = [];
   document.querySelectorAll('.ty2-attendee:checked').forEach(function(c){ selected.push(c.value); });
   document.querySelectorAll('.ty2-extra:checked').forEach(function(c){ selected.push(c.value); });
-  if (selected.length < 2) { toast('至少召集 2 人议事'); return; }
+  selected = selected.filter(function(n){return _ty2_isServingOfficial(findCharByName(n));});
+  if (selected.length < 2) { toast('至少召集 2 名在任官员议事'); return; }
 
   // 按品级排序与议者
   selected.sort(function(a,b) {

@@ -273,7 +273,7 @@
       };
     }
     async function _parseOrRepairJsonResult(raw, data, label, opts) {
-      return global.TM && TM.RecoveryRuntime ? TM.RecoveryRuntime.parse(raw,data,label,opts,_parseOrRepairJsonResultNormal) : _parseOrRepairJsonResultNormal(raw,data,label,opts);
+      return global.TM && TM.RecoveryRuntime ? TM.RecoveryRuntime.parse(raw,data,label,Object.assign({},opts,{normalizeParsed:function(parsed){return _normalizeParsedJsonForExpected(parsed,opts&&opts.expectedKeys);}}),_parseOrRepairJsonResultNormal) : _parseOrRepairJsonResultNormal(raw,data,label,opts);
     }
     async function _parseOrRepairJsonResultNormal(raw, data, label, opts) {
       opts = opts || {};
@@ -2448,7 +2448,7 @@
         "}],"+
         // 文事作品（诗词文赋画等，AI按触发源+境遇+人物条件判断是否生成）
         "\"cultural_works\":[{"+
-          "\"author\":\"作者角色名\","+
+          "\"author\":\"作者角色名\",\"taskId\":\"受命撰写时填原交办id，自发作品留空\","+
           "\"turn\":" + GM.turn + ","+
           "\"date\":\"具体日期/时节(如'元丰五年七月')\","+
           "\"location\":\"创作地点(如'黄州赤壁'/'京师翰林院'/'岭南谪所')\","+
@@ -3694,6 +3694,7 @@
       tp1 += '\n\n=== 输出格式强约束 (FINAL RULE·不可违反) ===\n'
            + 'YOU MUST RETURN JSON ONLY. 不要包裹 markdown 代码块·不要前言·不要解释·不要附加任何 prose。\n'
            + '第一个字符必须是 `{`·最后一个字符必须是 `}`。任何非 JSON 字符都会导致整回合推演失败·后续 sc1b/sc1c/sc1d/sc2 等子调用会全部降级。\n'
+           + '每个顶层字段只能出现一次；全部人物更新归入一个 char_updates 数组，不能在后文重复输出该字段。\n'
            + '若某段叙事字段超出长度·宁可截短不要省略 JSON 结构。';
       // FINAL RULE 的不可裁尾部；仍由下方原最终预算闸核算，不绕过上下文/输出上限。
       if (TM.BuildingOrders) tp1 += TM.BuildingOrders.prompt(GM, ctx.input.buildingOrders, false);
@@ -4273,6 +4274,10 @@
         tp1b += '  \u00B7 \u73A9\u5BB6 ' + _pNameB + ' \u4E0D\u5F97\u4F5C npc_interactions.actor\uFF1B\u4E0D\u5F97 autonomous \u4F5C cultural_works\n';
         tp1b += '  \u00B7 \u9AD8\u8D28\u91CF\uFF1A\u8BD7\u8981\u6709\u5883\uFF0C\u6587\u8981\u6709\u56E0\uFF0C\u4FE1\u8981\u6709\u9690\uFF0C\u4E92\u52A8\u8981\u6709\u65B9\n';
         tp1b += '\n\u8FD4\u56DE\u683C\u5F0F\uFF1A\n';
+        if (TM && TM.ImperialOrders) {
+          var writingOrders=TM.ImperialOrders.all(GM).filter(function(x){return x.c.category==='write'&&['pending','executing','delayed'].includes(x.c.status)&&!TM.ImperialOrders.awaitingReview(x.c);});
+          if(writingOrders.length) tp1b += '\n【受命撰写】须提交全文，并在 cultural_works 的 taskId 填下列原交办id；作者须与承办人一致：\n'+writingOrders.slice(0,16).map(function(x){return '['+x.c.id+'] '+(x.actor?x.actor.name:x.name)+'：'+x.c.task;}).join('\n')+'\n';
+        }
         tp1b += '{\n  "cultural_works":[{...}],\n  "npc_letters":[{...}],\n  "npc_correspondence":[{...}],\n  "npc_interactions":[{...}]\n}';
 
         // 动态 max_tokens：取模型输出上限与业务 8K 的较小值
@@ -4843,7 +4848,7 @@
         else if (emergencySC1.error && /^(AI_ABORTED|AI_STALE_WORLD|AI_REQUEST_DEADLINE|RECOVERY_DECLINED)$/.test(emergencySC1.error.code)) throw emergencySC1.error;
       }
       // 主推演没有完整结构时，不以其他子调用片段伪造完整回合。
-      if (!p1 || !_hasSc1StructuredResult(p1)) { var incomplete = new Error('主推演未形成完整结构化结果；保留响应并中止本回合'); incomplete.code = 'sc1-result-unavailable'; throw incomplete; }
+      if (!p1 || !_hasSc1StructuredResult(p1)) { var failure = global.TM && TM.RecoveryRuntime && TM.RecoveryRuntime.sc1Failure ? TM.RecoveryRuntime.sc1Failure() : null; var incomplete = new Error('主推演未形成完整结构化结果；保留响应并中止本回合' + (failure ? '；原因：' + failure.detail : '')); incomplete.code = 'sc1-result-unavailable'; throw incomplete; }
        if (TM.EdictOutcomes) {
          var _edictCoverage = TM.EdictOutcomes.coverage(GM, edicts, p1, GM.turn);
          if (_edictCoverage.missing.length) {

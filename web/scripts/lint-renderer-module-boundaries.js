@@ -12,6 +12,7 @@ const MODULE_ROOT = path.join(lib.WEB_ROOT, 'modules', 'ai-change-applier');
 const SOURCES = [
   'context.js',
   'core.js',
+  'office-update-intent.js',
   'validators.js',
   'reconcile.js',
   'legacy-adapter.js',

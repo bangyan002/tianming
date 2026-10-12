@@ -2365,8 +2365,10 @@ async function _tmCommitBackgroundWorld(request){
   if (!_tmAdoptCommittedWorldSnapshot(state,{turn:state.GM.turn,transactionId:transactionId,takeOwnership:true})) {
     throw new Error('background committed snapshot adoption failed');
   }
-  _autoSaveDeferred=true;
-  _tmRequestDeferredDesktopAutoSaveFlush('background-canonical-save');
+  if (_tmHasNativeFs()) {
+    _autoSaveDeferred=true;
+    _tmRequestDeferredDesktopAutoSaveFlush('background-canonical-save');
+  }
   return {ok:true,turn:Number(state.GM.turn)||0,transactionId:transactionId,reasons:Array.from(request.reasons)};
 }
 
@@ -2760,6 +2762,11 @@ function _tmCommittedSnapshotProjectEnvelope(){
 }
 
 async function _tmRunDesktopAutoSaveTick(options){
+  if (!_tmHasNativeFs()) return { ok: false, skipped: true, reason: 'browser-storage' };
+  var bridge = window.tianming;
+  if (!bridge || (typeof bridge.autoSaveJson !== 'function' && typeof bridge.autoSave !== 'function')) {
+    return { ok: false, skipped: true, reason: 'native-autosave-unavailable' };
+  }
   if(typeof TM_SaveDB!=='undefined'&&TM_SaveDB.assertWritable)TM_SaveDB.assertWritable();
   options = options || {};
   if (!GM || !GM.running) return { ok: false, skipped: true, reason: 'not-running' };
@@ -2795,7 +2802,7 @@ async function _tmRunDesktopAutoSaveTick(options){
 
   var sourceSnapshot = lastCommittedSnapshot;
   var sourceIdentity = _lastCommittedSnapshotIdentity;
-  var targetGM=GM,targetP=P,targetGeneration=window._tmLoadGen||0,bridge=window.tianming;
+  var targetGM=GM,targetP=P,targetGeneration=window._tmLoadGen||0;
   function snapshotStillCurrent(){return GM===targetGM&&P===targetP&&(window._tmLoadGen||0)===targetGeneration
     &&window.tianming===bridge&&lastCommittedSnapshot===sourceSnapshot&&_lastCommittedSnapshotIdentity===sourceIdentity
     &&_tmCommittedSnapshotMatchesLive();}
@@ -2857,6 +2864,11 @@ async function _tmRunDesktopAutoSaveTick(options){
 }
 
 function _tmFlushDeferredDesktopAutoSave(reason, options){
+  if (!_tmHasNativeFs()) {
+    _autoSaveDeferred = false;
+    if (_autoSaveFlushTimer) { clearTimeout(_autoSaveFlushTimer); _autoSaveFlushTimer = null; }
+    return Promise.resolve({ ok: false, skipped: true, reason: 'browser-storage' });
+  }
   options = options || {};
   if (!_autoSaveDeferred) return Promise.resolve({ ok: false, skipped: true, reason: 'not-deferred' });
   if (isWorldTransactionActive()) return Promise.resolve({ ok: false, deferred: true, reason: 'world-transaction-active' });
@@ -2931,6 +2943,12 @@ window.addEventListener('beforeunload',function(event){
       // discarding an already generated background chronicle on immediate exit.
       event.preventDefault();
       event.returnValue='';
+    }
+    // The local SQLite adapter saves through the normal project owner; sync
+    // XHR and a redundant full-project fallback are invalid during dismissal.
+    if(window.TMServerStorage && typeof window.TMServerStorage.beforeUnload==='function'){
+      window.TMServerStorage.beforeUnload(event);
+      return;
     }
     if(_tmHasNativeFs()) localStorage.removeItem("tm_P");
     else{

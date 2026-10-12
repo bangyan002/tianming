@@ -3,12 +3,23 @@ const assert=require('assert/strict');
 const {fixture,agentReply,rawParse,pause,run}=require('./lib-emergency-recovery');
 const tests=[],test=(name,fn)=>tests.push({name,fn});
 function spec(){return {id:'sc25c',kind:'test',raw:'原文证据',normalExhausted:true,safeBoundary:true,error:{code:'AI_PARSE_INVALID'},adapter:{preview:p=>({ok:true,value:p})}};}
+for(const settings of [null,{maxTokens:0},{maxTokens:48000},{maxTokens:'48000'}])test((settings?(Number(settings.maxTokens)===48000?'legacy saved default':'explicit zero'):'untouched default')+' permits verified recovery beyond 48000 estimated tokens',async()=>{
+ const f=fixture(settings||{});try{if(!settings)delete f.c.P.conf.emergencyRecovery;assert.equal(f.c.TM.EmergencyRecovery.config().maxTokens,0);let calls=0;f.c.estimateTokens=()=>30000;f.c.callAI=async p=>{calls++;return agentReply(p,{answer:'完整恢复'});};
+ const r=await f.c.TM.EmergencyRecovery.recover(spec());assert(r.ok,r.reason);assert.equal(calls,3);const last=f.events.at(-1);assert.equal(last.estimatedTokens,3*(30000+3072));assert.equal(last.budget.maxTokens,0);assert.equal(last.phase,'verified');
+ }finally{f.dispose();}
+});
+test('unlimited tokens still stop at the configured model-call budget',async()=>{
+ const f=fixture({maxTokens:0,maxCalls:2});try{let calls=0;f.c.estimateTokens=()=>50000;f.c.callAI=async()=>{calls++;return '{}';};const r=await f.c.TM.EmergencyRecovery.recover(spec());assert.equal(r.reason,'RECOVERY_BUDGET');assert.equal(calls,2);assert.equal(f.events.at(-1).estimatedTokens,2*(50000+3072));}finally{f.dispose();}
+});
+test('emergency token limits accept zero and reject malformed values',()=>{
+ const f=fixture();try{const R=f.c.TM.EmergencyRecovery;assert.equal(R.config({maxTokens:0}).maxTokens,0);for(const value of ['',-1,1.5,Infinity,NaN,true,null,Number.MAX_SAFE_INTEGER+1])assert.throws(()=>R.config({maxTokens:value}),e=>e.code==='RECOVERY_CONFIG'&&e.field==='maxTokens');}finally{f.dispose();}
+});
 test('user budgets above every former ceiling remain unchanged',()=>{
  const f=fixture({maxCalls:100,maxRepairs:100,maxSteps:1000,maxTokens:2000000,timeoutMs:90000000});try{const c=f.c.TM.EmergencyRecovery.config();for(const [k,v]of Object.entries({maxCalls:100,maxRepairs:100,maxSteps:1000,maxTokens:2000000,timeoutMs:90000000}))assert.equal(c[k],v);}finally{f.dispose();}
 });
 
 test('fixed review has an independent unlimited default while an explicit finite budget is preserved',()=>{
- const f=fixture({maxTokens:48000});try{const R=f.c.TM.EmergencyRecovery;assert.equal(R.config().reviewMaxTokens,0);assert.equal(R.config({reviewMaxTokens:250000}).reviewMaxTokens,250000);assert.equal(R.config().maxTokens,48000);
+ const f=fixture({maxTokens:48000,tokenBudgetVersion:1});try{const R=f.c.TM.EmergencyRecovery;assert.equal(R.config().reviewMaxTokens,0);assert.equal(R.config({reviewMaxTokens:250000}).reviewMaxTokens,250000);assert.equal(R.config().maxTokens,48000);assert.equal(R.config({maxTokens:48000}).maxTokens,48000);
  for(const value of ['',-1,1.5,Infinity,true,null,Number.MAX_SAFE_INTEGER+1])assert.throws(()=>R.config({reviewMaxTokens:value}),e=>e.code==='RECOVERY_CONFIG'&&e.field==='reviewMaxTokens');
  }finally{f.dispose();}
 });

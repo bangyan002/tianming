@@ -744,14 +744,15 @@ function applyEdictActions(actions) {
           (n.positions||[]).forEach(function(p) {
             if (!p) return;
             var holderHit = p.holder === a.character;
-            var ahHit = Array.isArray(p.actualHolders) && p.actualHolders.some(function(h){ return h && h.name === a.character; });
+            var ahHit = Array.isArray(p.actualHolders) && p.actualHolders.some(function(h){ return h && (char && char.id && h.characterId ? h.characterId === char.id : h.name === a.character); });
             if (holderHit || ahHit) {
-              if (typeof _offDismissPerson === 'function') _offDismissPerson(p, a.character);
+              if (typeof _offDismissPerson === 'function') _offDismissPerson(p, char && char.id || a.character);
               else p.holder = '';
               didAny = true;
             }
           });
           if (n.subs) walkD(n.subs);
+          if (n.children) walkD(n.children);
         });
       }
       walkD(GM.officeTree);

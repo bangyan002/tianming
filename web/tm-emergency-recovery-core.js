@@ -3,15 +3,21 @@
   'use strict';
   var TM=root.TM=root.TM||{}; if(TM.EmergencyRecovery)return;
   var active=new Map(), history=[], sequence=0;
-  var defaults={mode:'auto',tier:'same',maxCalls:6,maxRepairs:3,maxSteps:18,maxTokens:48000,reviewMaxTokens:0,timeoutMs:0};
+  var defaults={mode:'auto',tier:'same',maxCalls:6,maxRepairs:3,maxSteps:18,maxTokens:0,tokenBudgetVersion:1,reviewMaxTokens:0,timeoutMs:0};
   function fault(code,message){var e=new Error(message||code);e.code=code;return e;}
-  function draftConfig(value){return Object.assign({},defaults,value===undefined?(root.P&&root.P.conf&&root.P.conf.emergencyRecovery||{}):value);}
+  function draftConfig(value){
+    var saved=value===undefined?(root.P&&root.P.conf&&root.P.conf.emergencyRecovery||{}):value;
+    var c=Object.assign({},defaults,saved);
+    // Old settings persisted the former 48000 default; migrate it without mutating the saved project.
+    if(value===undefined&&saved&&!saved.tokenBudgetVersion&&Number(saved.maxTokens)===48000)c.maxTokens=0;
+    c.tokenBudgetVersion=1;return c;
+  }
   function config(value){
     var c=draftConfig(value);
     if(!['auto','ask','off'].includes(c.mode)||!['same','primary','secondary'].includes(c.tier))throw fault('RECOVERY_CONFIG','应急恢复模式或模型来源无效');
     var fields={maxCalls:'额外模型调用预算',maxRepairs:'候选修订预算',maxSteps:'工具步骤预算',maxTokens:'失败后应急 Token 预算',reviewMaxTokens:'固定复核 Token 预算',timeoutMs:'应急最大等待'};
     Object.keys(fields).forEach(function(k){
-      var n=Number(c[k]),min=k==='timeoutMs'||k==='reviewMaxTokens'?0:1;
+      var n=Number(c[k]),min=k==='timeoutMs'||k==='reviewMaxTokens'||k==='maxTokens'?0:1;
       if(c[k]===null||typeof c[k]==='boolean'||String(c[k]).trim()===''||!Number.isSafeInteger(n)||n<min){
         var error=fault('RECOVERY_CONFIG',fields[k]+'须为'+(min?'正整数':'非负整数（0 表示不设限制）'));error.field=k;throw error;
       }c[k]=n;
@@ -37,7 +43,7 @@
     var secondary=root.P&&root.P.ai&&root.P.ai.secondary;
     if(modelTier==='secondary'&&!(secondary&&typeof secondary.key==='string'&&secondary.key.trim()&&typeof secondary.url==='string'&&secondary.url.trim()))throw fault('RECOVERY_MODEL_UNAVAILABLE','指定的次要恢复接口未完整配置，未擅自改用主接口');
     if(!TM.AgentKernel||!TM.RecoveryTools)throw fault('RECOVERY_UNAVAILABLE','应急工具或预算内核未加载');
-    var run=TM.AgentKernel.createRun({budget:{maxCalls:c.maxCalls,maxTokens:c.maxTokens},signal:s.controller.signal});
+    var run=TM.AgentKernel.createRun({budget:{maxCalls:c.maxCalls,maxTokens:c.maxTokens===0?Infinity:c.maxTokens},signal:s.controller.signal});
     var tools,transcript=[],prior=new Map(),previews=0,calls=0,steps=0;
     try {
     tools=TM.RecoveryTools.create(spec,s);
@@ -87,7 +93,7 @@
     var key=JSON.stringify([spec.kind,spec.id,spec.raw||spec.input||'',spec.requestText||'',spec.adapter&&spec.adapter.contract,worldStamp,gen]);
     var running=active.get(key);if(running&&running.gm===gm)return running.promise;
     var cfgIdentity=JSON.stringify([player&&player.ai,c]);
-    var s={gm:gm,controller:new AbortController(),summary:{id:'er-'+(++sequence),call:spec.id||spec.kind,kind:spec.kind,phase:'starting',calls:0,steps:0,repairs:0,estimatedTokens:0,budget:copy(c),normalExhausted:true,startedAt:Date.now()}};
+    var s={gm:gm,controller:new AbortController(),summary:{id:'er-'+(++sequence),call:spec.id||spec.kind,kind:spec.kind,phase:'starting',calls:0,steps:0,repairs:0,estimatedTokens:0,budget:copy(c),normalExhausted:true,startedAt:Date.now(),failureDetails:copy(spec.failureDetails||[])}};
     s.guard=function(){
       if(s.controller.signal.aborted)throw s.controller.signal.reason||fault('AI_ABORTED');
       if(root.GM!==gm||root.P!==player||root._tmLoadGen!==gen||JSON.stringify(gm&&[gm._campaignId,gm._timelineId,gm.turn])!==worldStamp||JSON.stringify([player&&player.ai,config()])!==cfgIdentity)throw fault('AI_STALE_WORLD','恢复期间存档或接口设置已改变');
@@ -107,6 +113,7 @@
     }
     function inspect(){try{s.guard();watch=setTimeout(inspect,1000);}catch(e){s.controller.abort(e);}}watch=setTimeout(inspect,1000);
     s.promise=Promise.resolve().then(function(){return execute(spec,s,c);}).then(function(result){publish(s,'verified','候选已验证，交回原执行链；不等于已经保存');return result;},function(e){
+      var reliability=TM.Endturn&&TM.Endturn.Reliability;if(reliability&&reliability.noteFailure)reliability.noteFailure(e,{stage:'应急恢复',subcall:s.summary.call});
       publish(s,'stopped',e.message);return {ok:false,error:e,reason:e.code||'recovery-failed',receipt:{id:s.summary.id,verified:false,applied:false}};
     }).finally(function(){
       clearTimeout(timer);clearTimeout(watch);if(spec.signal)spec.signal.removeEventListener('abort',external);

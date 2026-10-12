@@ -483,8 +483,8 @@ function estimateTokens(text) {
  * 返回 { contextK, budget, warn80, warn95 }
  */
 function getPromptBudget() {
-  var cp = (typeof getCompressionParams === 'function') ? getCompressionParams() : { contextK: 256 };
-  var contextK = cp.contextK || 256;
+  var cp = (typeof getCompressionParams === 'function') ? getCompressionParams() : { contextK: 1024 };
+  var contextK = cp.contextK || 1024;
   // 留 1/4 给响应+缓冲
   var budget = Math.floor(contextK * 1024 * 0.75);
   return { contextK: contextK, budget: budget, warn80: Math.floor(budget * 0.8), warn95: Math.floor(budget * 0.95) };
@@ -566,7 +566,7 @@ async function _aiFetchWithRetryInner(url, body, signal, opts) {
     var budgetLimited = !!opts.retryBudget && opts.retryBudget.deadlineAt - Date.now() <= timeoutMs;
     if (opts.retryBudget) timeoutMs = Math.min(timeoutMs, Math.max(1, opts.retryBudget.deadlineAt - Date.now()));
     var reliability = typeof window !== "undefined" && window.TM && window.TM.Endturn && window.TM.Endturn.Reliability;
-    if (reliability) reliability.requestPhase(opts._requestTicket, "request");
+    if (reliability) reliability.requestPhase(opts._requestTicket, typeof _tmAINativePlatform === "function" && _tmAINativePlatform() ? "native-buffered" : "request");
     var ctrl = new AbortController();
     var timedOut = false;
     var requestPhase = 'headers', timeoutError, rejectDeadline;
@@ -592,7 +592,7 @@ async function _aiFetchWithRetryInner(url, body, signal, opts) {
       }), deadline]);
       responseWait.headers(resp.ok, resp.status);
       requestPhase = 'body';
-      if (reliability) reliability.requestPhase(opts._requestTicket, 'body');
+      if (reliability) reliability.requestPhase(opts._requestTicket, resp.ok ? 'body' : 'error-body');
       // 429 速率限制：读 Retry-After 延迟
       if (resp.status === 429 && attempt < maxRetries) {
         clearTimeout(timer);
@@ -600,6 +600,7 @@ async function _aiFetchWithRetryInner(url, body, signal, opts) {
         var retryAfter = parseInt(resp.headers.get('Retry-After') || '0', 10);
         var delay429 = _aiRetryDelay(resp, attempt);
         console.warn('[AI] 429 速率限制，等待 ' + delay429 + 'ms 后重试 (' + (attempt+1) + '/' + maxRetries + ')');
+        if (reliability) reliability.requestRetry(opts._requestTicket, { status: 429 }, delay429);
         await _aiBudgetedRetryWait(delay429, ctrl.signal, opts.retryBudget);
         continue;
       }
@@ -629,6 +630,7 @@ async function _aiFetchWithRetryInner(url, body, signal, opts) {
               if (_reducedBody && _afterBody.length < _beforeBody.length) {
                 body = _reducedBody;
                 _contextReduced = true;
+                if (reliability) reliability.requestRetry(opts._requestTicket, lastError, 0);
                 protocolReplay = true;
                 console.warn('[AI] context-length 400·按更严预算压缩后仅重试一次');
                 continue;
@@ -644,6 +646,7 @@ async function _aiFetchWithRetryInner(url, body, signal, opts) {
         //   并本会话停用缓存标记（防每回合都先撞一次 400）。仅脱一次，避免无限重试。
         if (resp.status === 400 && !_isContextLength && !_ccStripped && _stripCacheControlFromBody(body)) {
           _ccStripped = true;
+          if (reliability) reliability.requestRetry(opts._requestTicket, lastError, 0);
           protocolReplay = true;
           _aiCacheCtrlDisabled = true;
           console.warn('[AI] 400 且请求含 cache_control·疑代理不认·已脱字段重试并本会话停用 prompt 缓存标记');
@@ -651,7 +654,9 @@ async function _aiFetchWithRetryInner(url, body, signal, opts) {
         }
         // 5xx 可重试；4xx（除 429）不重试
         if (resp.status >= 500 && attempt < maxRetries) {
-          await _aiBudgetedRetryWait(_aiRetryDelay(null, attempt), ctrl.signal, opts.retryBudget);
+          var providerDelay = _aiRetryDelay(null, attempt);
+          if (reliability) reliability.requestRetry(opts._requestTicket, lastError, providerDelay);
+          await _aiBudgetedRetryWait(providerDelay, ctrl.signal, opts.retryBudget);
           continue;
         }
         throw lastError;
@@ -700,6 +705,7 @@ async function _aiFetchWithRetryInner(url, body, signal, opts) {
       if (attempt < maxRetries) {
         var delayRetry = _aiRetryDelay(null, attempt);
         console.warn('[AI] 第 ' + (attempt+1) + ' 次尝试失败: ' + (e.message || e) + '，' + delayRetry + 'ms 后重试');
+        if (reliability) reliability.requestRetry(opts._requestTicket, e, delayRetry);
         await _aiBudgetedRetryWait(delayRetry, timedOut ? signal : ctrl.signal, opts.retryBudget);
       } else {
         // 挂载最后的原始响应
@@ -2760,6 +2766,9 @@ function exportAIDiagnosticsJSON() {
     exportedAt: new Date().toISOString(),
     turn: G ? (G.turn || 0) : 0,
     diagnostics: d || null,
+    turnAttempts: (typeof TM !== 'undefined' && TM.Endturn && TM.Endturn.Reliability) ? { history: TM.Endturn.Reliability.snapshot(), running: TM.Endturn.Reliability.live() } : null,
+    sc1Failure: (typeof TM !== 'undefined' && TM.RecoveryRuntime && TM.RecoveryRuntime.sc1Failure) ? TM.RecoveryRuntime.sc1Failure() : null,
+    jsonNormalization: (typeof TM !== 'undefined' && TM.RecoveryRuntime && TM.RecoveryRuntime.jsonNormalization) ? TM.RecoveryRuntime.jsonNormalization() : null,
     costHistory: G ? (Array.isArray(G._costHistory) ? G._costHistory.slice(-20) : []) : [],
     // Phase 7·"全部历史"·从 localStorage 读
     persistedErrorHistory: (function(){ try { return JSON.parse(localStorage.getItem('tianming_subcallErrors_history') || '[]'); } catch(_){ return []; } })(),
@@ -2817,6 +2826,7 @@ function _classifySubcallError(err) {
   return 'other';
 }
 function recordSubcallError(subcall, phase, err) {
+  if (globalThis.TM && TM.Endturn && TM.Endturn.Reliability && TM.Endturn.Reliability.noteFailure) TM.Endturn.Reliability.noteFailure(err, { subcall: subcall, phase: phase });
   var d = (typeof ensureAIDiagnostics === 'function') ? ensureAIDiagnostics() : null;
   if (!d) return null;
   var msg = (err && err.message) || String(err || 'unknown');

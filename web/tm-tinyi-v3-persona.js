@@ -193,6 +193,7 @@ function _ty3_calcEligibilityByLocation(ch) {
 function _ty3_calcEligibilityByStatus(ch) {
   if (!ch) return { category: '不召', layer: 3 };
   if (ch.alive === false)                    return { category: '不召', layer: 3 };
+  if (typeof _ty2_isServingOfficial === 'function' && !_ty2_isServingOfficial(ch)) return { category:'不召', layer:3 };
   if (ch._imprisoned)                         return { category: '不召', layer: 3 };  // v2.6 修·非 _inPrison
   if (ch._exiled)                             return { category: '不召', layer: 3 };
   if (ch._dingyou)                            return { category: '不召', layer: 3 };  // v2.6 新建
@@ -1482,16 +1483,21 @@ function _ty3_findByRole(roleName) {
 
 function _ty3_recommendAttendees(topic, tags, scenario) {
   var recommended = {};  // use as set
+  function canRecommend(c) {
+    return !!c && !c.isPlayer && !_ty3_calcEligibilityByStatus(c) &&
+      (typeof _isAtCapital !== 'function' || _isAtCapital(c)) &&
+      (typeof _isPlayerFactionChar !== 'function' || _isPlayerFactionChar(c));
+  }
   // 第 1 步·必召 (阁臣 + 朝代 requiredCallList)
   var conv = (typeof _ty3_getConveningConfig === 'function') ? _ty3_getConveningConfig(scenario) : { requiredCallList: [] };
   (conv.requiredCallList || []).forEach(function(role) {
     var chs = _ty3_findByRole(role);
-    if (chs[0]) recommended[chs[0].name] = true;
+    var first = chs.find(canRecommend); if (first) recommended[first.name] = true;
   });
   // 第 2 步·按 tag 推荐
   (tags || []).forEach(function(tag) {
     (TAG_TO_RECOMMEND[tag] || []).forEach(function(role) {
-      _ty3_findByRole(role).forEach(function(c) { recommended[c.name] = true; });
+      _ty3_findByRole(role).filter(canRecommend).forEach(function(c) { recommended[c.name] = true; });
     });
   });
   // 第 3 步·党派均衡 (各党至少 1 leader)
@@ -1502,7 +1508,7 @@ function _ty3_recommendAttendees(topic, tags, scenario) {
         var c = (typeof findCharByName === 'function') ? findCharByName(n) : null;
         return c && c.party === p.name;
       });
-      if (!inAny && p.leader) recommended[p.leader] = true;
+      if (!inAny && p.leader && canRecommend(typeof findCharByName === 'function' ? findCharByName(p.leader) : null)) recommended[p.leader] = true;
     });
   }
   // 第 4 步·prestige 补全到 8+
@@ -1510,9 +1516,14 @@ function _ty3_recommendAttendees(topic, tags, scenario) {
   all.sort(function(a, b) { return ((b && b.prestige) || 50) - ((a && a.prestige) || 50); });
   for (var i = 0; i < all.length && Object.keys(recommended).length < 8; i++) {
     var c = all[i];
-    if (c && c.alive !== false && !recommended[c.name]) recommended[c.name] = true;
+    if (canRecommend(c) && !recommended[c.name]) recommended[c.name] = true;
   }
-  return Object.keys(recommended);
+  return Object.keys(recommended).filter(function(n){
+    var ch = typeof findCharByName === 'function' ? findCharByName(n) : null;
+    if (!ch || ch.isPlayer || typeof _ty2_isServingOfficial === 'function' && !_ty2_isServingOfficial(ch)) return false;
+    if (typeof _isAtCapital === 'function' && !_isAtCapital(ch) || typeof _isPlayerFactionChar === 'function' && !_isPlayerFactionChar(ch)) return false;
+    return !_ty3_calcEligibilityByStatus(ch);
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════

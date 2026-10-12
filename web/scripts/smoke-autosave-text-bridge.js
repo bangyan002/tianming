@@ -25,6 +25,7 @@ function renderer(api) {
     window: { _tmLoadGen: 1, tianming: api },
     GM: { running: true, turn: 8, sid: 'public-fixture', saveName: '保存😀', _campaignId: 'campaign-a', _timelineId: 'timeline-a' },
     P: { conf: {}, scenarios: [] }, deepClone: plain, _tmLiteSafeConf: plain, localStorage: { setItem() {}, removeItem() {} },
+    _tmHasNativeFs: () => true,
     findScenarioById: () => ({ name: '中文 e\u0301 😀' }) };
   vm.createContext(c); vm.runInContext(source.slice(start, end), c, { filename: 'tm-save-lifecycle.js' });
   c._tmAdoptCommittedWorldSnapshot({ GM: c.GM, P: c.P }, { transactionId: 'committed-a' });

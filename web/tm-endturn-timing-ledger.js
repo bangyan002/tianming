@@ -116,6 +116,8 @@
       mark(ctx, kind, Object.assign({ label: label, ok: true, ms: _now() - t0 }, data || {}));
       return result;
     } catch(e) {
+      var reliability = root.TM && root.TM.Endturn && root.TM.Endturn.Reliability;
+      if (reliability && reliability.noteFailure) reliability.noteFailure(e, { stage: label });
       mark(ctx, kind, Object.assign({
         label: label,
         ok: false,
@@ -270,12 +272,28 @@
       var reliability = root.TM && root.TM.Endturn && root.TM.Endturn.Reliability;
       var attempts = reliability && reliability.snapshot ? reliability.snapshot() : [];
       var extra = '';
-      if (attempts.length) {
-        var last = attempts[attempts.length - 1];
+      var running = reliability && reliability.live ? reliability.live() : null;
+      if (running || attempts.length) {
+        var last = running || attempts[attempts.length - 1];
         var labels = { dependency: '启动依赖', cancelled: '玩家取消', world_changed: '存档或配置改变', timeout: '等待超时', authentication: '鉴权', rate_limit: '供应商限流', provider: '供应商故障', context_budget: '上下文或恢复预算', output_format: '输出格式', persistence: '保存', world_validation: '世界校验', mobile_transport: '手机联网', runtime: '运行时' };
         extra = '<details open><summary>最近过回合尝试（回滚后仍可查看）</summary><div>模式：' + _esc(last.mode) + ' · 状态：' + _esc(last.status) + ' · 耗时：' + _esc(_fmtMs(last.ms)) + '</div>';
         if (last.failure) extra += '<div>失败类别：' + _esc(labels[last.failure.category] || last.failure.category) + ' · ' + _esc(last.failure.code) + '</div>';
-        extra += '<pre style="white-space:pre-wrap;max-height:260px;overflow:auto">' + _esc(JSON.stringify(last.requests || [], null, 2)) + '</pre><small>仅保存本次页面会话的安全元数据；刷新后清除。</small></details>';
+        var issues = (last.errors || []).map(function(row) { return row.error; });
+        if (last.failure) issues.push(last.failure);
+        var shown = new Set();
+        issues.forEach(function(issue) {
+          var text = [issue.stage, issue.subcall, issue.phase, issue.code].filter(Boolean).join(' · ') + '\n' + issue.message + '\n' + (issue.details || []).map(function(d) { return d.message; }).join('\n');
+          if (!shown.has(text)) { shown.add(text); extra += '<p style="white-space:pre-wrap">' + _esc(text.trim()) + '</p>'; }
+        });
+        extra += '<p>各调用可能并行，下面的耗时不能相加作为回合总耗时。</p>';
+        (last.requests || []).slice().sort(function(a, b) { return (b.ms || 0) - (a.ms || 0); }).forEach(function(row) {
+          var phaseTimes = Object.keys(row.phaseMs || {}).map(function(phase) { return reliability.phaseLabel(phase) + ' ' + _fmtMs(row.phaseMs[phase]); }).join('；');
+          extra += '<details><summary>' + _esc(row.label ? row.label + '（' + row.id + '）' : row.id) + ' · ' + _esc(row.ok == null ? '进行中' : row.ok ? '完成' : '失败') + ' · ' + _esc(_fmtMs(row.ms)) + ' · 请求 ' + (Number(row.attempts) || 0) + ' 次</summary><div>' + _esc(phaseTimes) + '</div>';
+          (row.retryErrors || []).forEach(function(retry) { extra += '<div>第 ' + retry.attempt + ' 次失败：' + _esc(retry.error.message) + '；等待重试 ' + _esc(_fmtMs(retry.delayMs)) + '</div>'; });
+          if (row.error) extra += '<div>' + _esc(row.error.message) + '</div>';
+          extra += '</details>';
+        });
+        extra += '<small>诊断保留在当前页面，回合回滚后仍可查看，也可在设置中导出 AI 日志；刷新后清除。推演期间再次打开可更新耗时。</small></details>';
       }
       var recovery = root.TM && root.TM.Endturn && root.TM.Endturn.ResponseRecovery;
       if (recovery) {

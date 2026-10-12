@@ -83,23 +83,25 @@
       var t=match(G,raw,turn);if(!t||!str(raw.feedback)||seen[t.id])return;
       seen[t.id]=true;
       var f=copy(raw);
-      if(TM.ImperialOrders)f=TM.ImperialOrders.guardEdict(G,Object.assign({},f,{edictId:t.id}));
-      var status=LABELS[f.status]?f.status:'executing',progress=Number(f.progressPercent);
-      var inTransit=list(t._letterIds).some(function(id){var l=list(G.letters).find(function(x){return x.id===id;});return !l||['delivered','returned','replying'].indexOf(l.status)<0;});
-      if(inTransit){status='pending_delivery';progress=0;}
       var actual=list(effects).filter(function(e){return list(e.edictIds).indexOf(t.id)>=0;});
       var previous=list(t.outcomes).find(function(r){return r.turn===turn;});
       if(!actual.length&&previous)actual=copy(previous.effects||[]);
+      var inTransit=list(t._letterIds).some(function(id){var l=list(G.letters).find(function(x){return x.id===id;});return !l||['delivered','returned','replying'].indexOf(l.status)<0;});
+      if(!inTransit&&TM.ImperialOrders)f=TM.ImperialOrders.guardEdict(G,Object.assign({},f,{edictId:t.id}),actual);
+      var status=LABELS[f.status]?f.status:'executing',progress=Number(f.progressPercent);
+      if(inTransit){status='pending_delivery';progress=0;}
       var unverified=actual.some(function(e){return e.status==='unverified';}),limited=actual.some(function(e){return e.status==='blocked'||e.status==='partial';}),unresolved=unverified||limited;
       var note=inTransit?'信使尚在途中，执行结果须待送达后核实。':unverified?'部分效果尚未核实，请见对应事项。':limited?'部分事项受阻或仅部分落实，请见实际执行记录。':status==='completed'&&!actual.length?'报称办结，尚无可核验的落地记录。':'';
-      if(status==='completed'&&unresolved)status='partial';
+      if(raw.status==='completed'&&unresolved&&!inTransit)status='partial';
+      if(!inTransit&&!unresolved&&t.verificationStatus==='verified')note='';
+      else if(!inTransit&&!unresolved&&t.verificationStatus==='pending_review')note=actual.length?'已记录本次实际执行变化，交办整体结果待朕验收。':'承办结果已呈，待朕验收。';
       if(raw.status==='completed'&&status!=='completed'&&!inTransit){var payments=actual.filter(function(e){return e.shortfall&&Number(e.requested)>0;});progress=payments.length===actual.length&&payments.length?Math.round(payments.reduce(function(n,e){return n+Math.abs(e.after-e.before);},0)/payments.reduce(function(n,e){return n+Number(e.requested);},0)*100):previous&&Number(previous.progressPercent)<100?Number(previous.progressPercent):0;}
       t.status=status;t.assignee=str(f.assignee)||t.assignee||'';t.feedback=str(f.feedback);
       t.progressPercent=isFinite(progress)?Math.max(0,Math.min(100,progress)):(status==='completed'?100:0);
       if(inTransit)t.feedback=note;
       if(TM.EdictEfficacy)TM.EdictEfficacy.judge(G,t,f);
       var clauses=copy(list(f.clauses));clauses.forEach(function(c){var linked=actual.filter(function(e){return list(c.effectRefs).indexOf(e.ref)>=0;});if(c.status==='completed'&&linked.some(function(e){return ['blocked','partial','unverified'].indexOf(e.status)>=0;})){c.reportedStatus=c.status;c.status='partial';c.note='此项尚未全部落实，请见实际执行记录。';}});
-      record(G,t,{turn:turn,edictId:t.id,content:t.content,category:t.category,status:status,reportedStatus:raw.status,assignee:t.assignee,feedback:t.feedback,progressPercent:t.progressPercent,nextStep:str(f.nextStep),note:note,clauses:clauses,effects:actual,coverage:'reported'});
+      record(G,t,{turn:turn,edictId:t.id,content:t.content,category:t.category,status:status,verificationStatus:t.verificationStatus,reportedStatus:raw.status,assignee:t.assignee,feedback:t.feedback,progressPercent:t.progressPercent,nextStep:str(f.nextStep),note:note,clauses:clauses,effects:actual,coverage:'reported'});
       if(!t._reliefCaseId&&(!previous||previous.coverage!=='reported')&&typeof root.addEB==='function'&&['completed','partial','obstructed'].indexOf(status)>=0)root.addEB({completed:'诏令功成',partial:'诏令部行',obstructed:'诏令受阻'}[status],(t.category||'诏令')+'：'+t.content.slice(0,40)+' — '+(note||t.feedback));
     });
     check.missing.forEach(function(t){record(G,t,{turn:turn,edictId:t.id,content:t.content,category:t.category,status:'pending',assignee:t.assignee||'',feedback:'尚未获得本回合的执行回报。',nextStep:'待补正执行情况。',effects:list(effects).filter(function(e){return list(e.edictIds).indexOf(t.id)>=0;}),coverage:'missing'});});
@@ -148,7 +150,7 @@
     if(!list(reports).length)return '';
     var html='<div class="tr-section"><div class="tr-section-hdr"><span class="lab">诏 令 回 报</span><span class="meta">本回合 '+reports.length+' 道</span></div>';
     reports.forEach(function(r){
-      html+='<div class="sjc-ef-report"><div class="sjc-ef-report-hd"><span class="st">'+esc(LABELS[r.status]||'待核')+' · '+esc(r.category||'诏令')+'</span></div><div class="sjc-ef-content">'+esc(r.content)+'</div><p>'+esc(r.assignee?('承办：'+r.assignee+'。'):'')+'回报：'+esc(r.feedback)+'</p>';
+      html+='<div class="sjc-ef-report"><div class="sjc-ef-report-hd"><span class="st">'+esc(r.verificationStatus==='pending_review'&&r.status==='executing'?'已复命·待验收':LABELS[r.status]||'待核')+' · '+esc(r.category||'诏令')+'</span></div><div class="sjc-ef-content">'+esc(r.content)+'</div><p>'+esc(r.assignee?('承办：'+r.assignee+'。'):'')+'回报：'+esc(r.feedback)+'</p>';
       list(r.clauses).forEach(function(c){html+='<p>'+esc(c.content)+'【'+esc(LABELS[c.status]||'待回报')+'】：'+esc(c.feedback||'')+esc(c.note?'（'+c.note+'）':'')+'</p>';});
       list(r.effects).forEach(function(e){
         // Hidden truth is supplied only to simulation; player feedback obeys the effect's disclosure.
