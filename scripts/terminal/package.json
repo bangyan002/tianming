@@ -1,0 +1,9 @@
+{
+  "name": "tianming-terminal-runtime",
+  "private": true,
+  "description": "天命终端模式的纯 JavaScript 运行依赖",
+  "dependencies": {
+    "fake-indexeddb": "6.2.4",
+    "jsdom": "26.1.0"
+  }
+}

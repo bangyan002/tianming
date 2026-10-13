@@ -1,5 +1,5 @@
 'use strict';
-// Focused acceptance with the real browser/runtime and a disposable profile.
+// Focused acceptance with the real game scripts inside Node and disposable files.
 // Only external AI responses are fixtures; no player keys or saves are read.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -7,36 +7,53 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { once } = require('node:events');
-const { Browser } = require('./browser.cjs');
+const { Runtime } = require('./runtime.cjs');
 const { parse, safeText, options } = require('../terminal.cjs');
+const { parseCommand, getCatalog, tokenize, complete } = require('./commands.cjs');
 
 async function main() {
-  assert.deepEqual(parse('下诏 经 清点仓储'), { action: 'edict', args: { category: 'economic', text: '清点仓储' } });
-  assert.deepEqual(parse('/召见 王承恩'), { action: 'summon', args: { query: '王承恩' } });
-  assert.deepEqual(parse('派人查看灾情'), { action: 'text', args: { text: '派人查看灾情' } });
-  assert.equal(parse('存档 9 中文名称').args.slot, 9);
-  assert.equal(parse('读档 0').args.id, 'slot_0');
-  assert.throws(() => parse('存档 10'), /1 到 9/);
-  assert.throws(() => parse('批复 1 批示'), /用法/);
-  assert.throws(() => parse('/typo'), /未知指令/);
+  assert.deepEqual(parse('edict add economic "清点仓储，具实奏报"'), { action: 'edict', args: { category: 'economic', text: '清点仓储，具实奏报' } });
+  assert.deepEqual(parse('audience open 王承恩'), { action: 'summon', args: { query: '王承恩', private: false } });
+  assert.throws(() => parse('派人查看灾情'), /未知子命令/);
+  assert.equal(parse('save write 9 "中文 名称"').args.name, '中文 名称');
+  assert.equal(parse('save load 0').args.id, 'slot_0');
+  assert.throws(() => parse('save write 10'), /1 到 9/);
+  assert.throws(() => parse('memorial reply 1 comment'), /用法/);
+  assert.throws(() => parse('typo'), /未知子命令/);
+  assert.throws(() => parse('audience say "未闭合'), /引号/);
+  assert.deepEqual(tokenize('audience say "臣说：\\"谨遵圣谕\\""'), ['audience', 'say', '臣说："谨遵圣谕"']);
+  assert.equal(parse(String.raw`save export "C:\目录\中文 存档.json"`).args.file, String.raw`C:\目录\中文 存档.json`);
+  assert.equal(parse('list audience').args.group, 'audience');
+  assert.deepEqual(parse('help audience'), parse('audience help'));
+  assert.deepEqual(complete('audience o'), [['audience open'], 'audience o']);
+  assert.deepEqual(complete('help pe'), [['help people'], 'help pe']);
+  assert(getCatalog().find(entry => entry.group === 'audience').commands.some(command => command.usage.startsWith('audience say')));
   assert.throws(() => options(['--unknown']), /未知启动参数/);
   assert.equal(safeText('中文\x1b[31m\x07\n正常'), '中文[31m\n正常');
-  console.log('PASS Chinese commands, validation and terminal control sanitization');
+  assert.deepEqual(parseCommand(['people', 'show', '王承恩']), { action: 'person', args: { query: '王承恩' } });
+  assert.deepEqual(parseCommand(['offices', 'list', '王承恩']), { action: 'offices', args: { query: '王承恩' } });
+  assert.deepEqual(parseCommand(['audience', 'open', '王承恩', '--private']), { action: 'summon', args: { query: '王承恩', private: true } });
+  assert.throws(() => parseCommand(['memorial', 'reply']), /编号/);
+  console.log('PASS English subcommands, runtime help, completion, quoting and terminal control sanitization');
 
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-terminal-test-'));
   let browser, provider, capturedRequest, streamCancelled = false;
   async function call(action, args) { return (await browser.call(action, args)).result; }
   try {
-    browser = new Browser({ dataDir: folder, noSandbox: process.argv.includes('--no-sandbox') });
+    browser = new Runtime({ dataDir: folder });
     await browser.start();
     // Deny all external fetches, including incidental runtime background work.
     await browser.evaluate(`window.__terminalOriginalFetch=window.fetch;window.fetch=function(url,opts){if(new URL(url,location.href).origin!==location.origin)return Promise.reject(Error('test-external-network-denied'));return __terminalOriginalFetch.apply(this,arguments);};`);
-    const competing = new Browser({ dataDir: folder });
+    const competing = new Runtime({ dataDir: folder });
     await assert.rejects(competing.start(), /已有终端游戏/);
     await competing.close();
     assert.equal((await call('scenarios')).length, 3);
     await call('start', { query: '1' });
     assert.equal((await call('status')).turn, 1);
+    const person = await call('person', { query: '王承恩' });
+    assert.equal(person.name, '王承恩');
+    assert(person.offices.length > 0);
+    assert((await call('offices', { query: '王承恩' })).some(row => row.holder === '王承恩'));
     await assert.rejects(call('next'), /配置/);
     assert.equal((await call('status')).turn, 1);
     console.log('PASS official scenario launch and no-key turn guard');
@@ -114,7 +131,7 @@ async function main() {
 
     await call('save', { slot: 2, name: '第二回合' });
     await browser.close();
-    browser = new Browser({ dataDir: folder, noSandbox: process.argv.includes('--no-sandbox') });
+    browser = new Runtime({ dataDir: folder });
     await browser.start();
     await browser.evaluate(`window.fetch=function(){return Promise.reject(Error('test-external-network-denied'));};`);
     await call('load', { id: 'slot_2' });

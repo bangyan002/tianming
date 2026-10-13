@@ -25,12 +25,12 @@
     template.content.querySelectorAll('script,style').forEach(function (node) { node.remove(); });
     return (template.content.textContent || '').replace(/\n[ \t]*\n[ \t]*\n/g, '\n\n').trim();
   }
-  function running() { if (!GM.running) throw Error('请先用「开局 编号」或「读档」进入游戏。'); }
+  function running() { if (!GM.running) throw Error('请先用 game start <scenario> 或 save load 进入游戏。'); }
   function writable() {
     if (GM.busy || GM._endTurnBusy || endTurn._preSubmitInFlight || window._wenduiSending) throw Error('游戏正在处理上一项操作，请稍候。');
   }
   function needAI() {
-    if (!(P.ai && P.ai.key && P.ai.url && P.ai.model)) throw Error('请先「配置」AI 地址、模型和密钥，才能对话或推演回合。');
+    if (!(P.ai && P.ai.key && P.ai.url && P.ai.model)) throw Error('请先用 config set 配置 AI 地址、模型和密钥，才能对话或推演回合。');
   }
   function draftBridge() {
     if (!window.TMPhase8FormalBridge || !TMPhase8FormalBridge.drafts) throw Error('诏令模块尚未就绪。');
@@ -55,9 +55,36 @@
       running: true, scenario: scenario && scenario.name || GM.sid, turn: GM.turn,
       date: typeof getTSText === 'function' ? getTSText(GM.turn) : GM.date || '',
       player: info.characterName || '', faction: info.factionName || '', target: GM.wenduiTarget,
-      treasury: GM.guoku || {}, variables: Object.keys(GM.vars || {}).map(function (name) { var row = GM.vars[name]; return { name: name, value: row.value, unit: row.unit || '' }; }),
+      treasury: ['money','grain','cloth','turnIncome','turnExpense','annualIncome','annualExpense'].reduce(function (result, key) { if (GM.guoku && GM.guoku[key] !== undefined) result[key] = GM.guoku[key]; return result; }, {}), variables: Object.keys(GM.vars || {}).map(function (name) { var row = GM.vars[name]; return { name: name, value: row.value, unit: row.unit || '' }; }),
       drafts: draftBridge().getFormalEdictDraftSnapshot(), ai: !!(P.ai && P.ai.key)
     };
+  }
+  function offices() {
+    var rows = [];
+    function visit(nodes, parent) {
+      (nodes || []).forEach(function (department) {
+        var label = parent.concat(department.name || department.id || '机构');
+        (department.positions || []).forEach(function (position) {
+          var who = (GM.chars || []).find(function (c) { return position.holder && c.name === position.holder || position.holderId && c.id === position.holderId; });
+          rows.push({ index: rows.length + 1, id: position.id || '', name: position.name || '', department: label.join(' / '), rank: position.rank || '', holder: who && who.name || position.holder || '', function: position.function || position.func || position.description || '' });
+        });
+        visit(department.subs || department.children, label);
+      });
+    }
+    visit(GM.officeTree, []); return rows;
+  }
+  function resumeAudience() {
+    if (!GM.wenduiTarget || document.getElementById('wd-modal-input')) return;
+    var metadata = {};
+    try { metadata = JSON.parse(localStorage.getItem('tm_terminal_audience') || '{}'); } catch (_) {}
+    var target = GM.wenduiTarget;
+    var mode = metadata.target === target && metadata.campaignId === GM._campaignId ? metadata.mode : 'formal';
+    openWenduiModal(target, mode, null, { campaignId: GM._campaignId, timelineId: GM._timelineId, turn: GM.turn, target: target });
+    if (!document.getElementById('wd-modal-input')) throw Error(notices.join('\n') || '保存的召见会话目前无法继续。');
+  }
+  function rememberAudience() {
+    if (GM.wenduiTarget) localStorage.setItem('tm_terminal_audience', JSON.stringify({ target: GM.wenduiTarget, mode: _wenduiMode, campaignId: GM._campaignId, timelineId: GM._timelineId, turn: GM.turn }));
+    else localStorage.removeItem('tm_terminal_audience');
   }
   async function save(slot, name) {
     running(); writable();
@@ -82,7 +109,7 @@
   async function call(action, args) {
     args = args || {}; notices = [];
     var result;
-    if (!['status', 'scenarios', 'people', 'memorials', 'history', 'saves', 'prompt', 'configStatus'].includes(action)) writable();
+    if (!['status', 'scenarios', 'people', 'person', 'offices', 'office', 'audienceStatus', 'audienceHistory', 'memorials', 'history', 'saves', 'prompt', 'configStatus'].includes(action)) writable();
     if (action !== 'choose' && action !== 'prompt') choices = [];
     switch (action) {
       case 'scenarios':
@@ -101,6 +128,36 @@
         await save(0, '终端自动存档'); break;
       }
       case 'status': result = status(); break;
+      case 'restore': {
+        var current = await TM_SaveDB.load('slot_0');
+        var canonical = await TM_SaveDB.load('autosave');
+        if (canonical && _isLoadableGameState(canonical.gameState)) {
+          var latestGM = canonical.gameState.GM || canonical.gameState;
+          var currentGM = current && current.gameState && (current.gameState.GM || current.gameState);
+          if (!currentGM || latestGM._campaignId === currentGM._campaignId && latestGM._timelineId === currentGM._timelineId && Number(latestGM.turn) > Number(currentGM.turn)) current = canonical;
+        }
+        if (current && _isLoadableGameState(current.gameState)) {
+          await fullLoadGame({ gameState: current.gameState }, { source: 'terminal-command-resume', preserveTimeline: true });
+          resumeAudience();
+        }
+        result = status(); break;
+      }
+      case 'person': {
+        running(); var person = resolve(GM.chars || [], args.query);
+        result = { index: GM.chars.indexOf(person) + 1, name: person.name, age: person.age, alive: person.alive !== false && !person.dead, faction: person.faction || '', party: person.party || '', location: person.location || '', role: person.role || person.position || person.title || '', loyalty: person.loyalty, health: person.health, intelligence: person.intelligence, administration: person.administration, politics: person.politics, military: person.military, personality: person.personality || '', offices: offices().filter(function (row) { return row.holder === person.name; }), summonable: typeof _wdCanDirectAudience === 'function' && _wdCanDirectAudience(person) }; break;
+      }
+      case 'offices': case 'office':
+        running(); result = offices();
+        if (action === 'office') result = resolve(result, args.query);
+        else if (args.query) result = result.filter(function (row) { return [row.name, row.department, row.rank, row.holder].join(' ').includes(args.query); });
+        break;
+      case 'audienceStatus':
+        running(); result = { target: GM.wenduiTarget || null, mode: _wenduiMode, exchanges: GM.wenduiTarget ? (GM.wenduiHistory[GM.wenduiTarget] || []).length : 0 }; break;
+      case 'audienceHistory': {
+        running(); var target = args.query ? resolve(GM.chars || [], args.query).name : GM.wenduiTarget;
+        if (!target) throw Error('请指定人物，或先召见一人。');
+        result = { target: target, messages: (GM.wenduiHistory[target] || []).map(function (row) { return { role: row.role, content: plain(row.content), turn: row.turn }; }) }; break;
+      }
       case 'people':
         running();
         result = (GM.chars || []).map(function (c, index) {
@@ -108,7 +165,11 @@
         }).filter(function (c) { return !args.query || [c.name, c.role, c.location].join(' ').includes(args.query); }); break;
       case 'summon': {
         running(); var ch = resolve(GM.chars || [], args.query);
-        if (GM.wenduiTarget && GM.wenduiTarget !== ch.name) { closeWenduiModal(); await Promise.all(Array.from(closingJobs)); }
+        var requestedMode = args.private ? 'private' : 'formal';
+        if (GM.wenduiTarget && (GM.wenduiTarget !== ch.name || _wenduiMode !== requestedMode)) { closeWenduiModal(); await Promise.all(Array.from(closingJobs)); }
+        if (GM.wenduiTarget === ch.name && _wenduiMode === requestedMode && document.getElementById('wd-modal-input')) {
+          result = { target: ch.name, greeting: '当前正在与此人对话。' }; break;
+        }
         openWenduiModal(ch.name, args.private ? 'private' : 'formal');
         if (GM.wenduiTarget !== ch.name || !document.getElementById('wd-modal-input')) throw Error(notices.join('\n') || '当前不能召见此人。');
         var bubbles = Array.from(document.querySelectorAll('#wd-modal-chat .wendui-npc-bubble'));
@@ -117,8 +178,9 @@
       }
       case 'say': {
         running(); needAI();
+        resumeAudience();
         var input = document.getElementById('wd-modal-input'), target = GM.wenduiTarget;
-        if (!target || !input) throw Error('请先「召见 人物名」。');
+        if (!target || !input) throw Error('请先用 audience open <person> 召见人物。');
         var before = (GM.wenduiHistory[target] || []).length;
         input.value = args.text; await sendWendui();
         var replies = (GM.wenduiHistory[target] || []).slice(before).filter(function (row) { return row.role === 'npc'; });
@@ -182,7 +244,8 @@
         if (!saved || !_isLoadableGameState(saved.gameState)) throw Error('存档不存在或无法读取：' + id);
         if (GM.wenduiTarget) { closeWenduiModal(); await Promise.all(Array.from(closingJobs)); }
         await fullLoadGame({ gameState: saved.gameState }, { source: 'terminal-' + id });
-        result = status(); break;
+        resumeAudience();
+        result = status(); await save(0, '终端自动存档'); break;
       }
       case 'export':
         running(); await Promise.all(Array.from(closingJobs));
@@ -192,6 +255,7 @@
         if (!args.data || !args.data.gameState || !_isLoadableGameState(args.data.gameState)) throw Error('文件不是有效的天命存档。');
         if (GM.wenduiTarget) { closeWenduiModal(); await Promise.all(Array.from(closingJobs)); }
         await fullLoadGame(args.data, { source: 'terminal-import' });
+        resumeAudience();
         result = status(); await save(0, '终端自动存档'); break;
       case 'configure': {
         var config = Object.assign({}, P.ai || {}, args);
@@ -205,12 +269,13 @@
       case 'prompt': result = prompt(); break;
       case 'choose': {
         var button = choices[args.index - 1];
-        if (!button || !button.isConnected || button.disabled) throw Error('选项已变化，请重新输入「提示」。');
-        choices = []; button.click();
+        if (!button || !button.isConnected || button.disabled) throw Error('选项已变化，请重新输入 prompt show。');
+        choices = []; if (window.__tmTerminalClick) window.__tmTerminalClick(button); else button.click();
         result = prompt(); break;
       }
       default: throw Error('未知终端操作：' + action);
     }
+    if (GM.running) rememberAudience();
     return { result: result, notices: notices.slice() };
   }
   window.TMTerminal = { call: call };

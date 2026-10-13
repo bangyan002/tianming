@@ -1,87 +1,157 @@
-# 天命终端版
+# 天命 Node 终端版
 
-在仓库根目录运行：
-
-```bash
-npm run cli
-```
-
-需要 Node.js 22 或更新版本，以及已安装的 Chromium、Chrome 或 Edge。游戏在后台运行浏览器引擎，窗口不会打开，全部操作和反馈都在终端完成。终端入口复用现有剧本、人物问对、诏令、回合事务和存档逻辑，图像、字体和音频不加载。
-
-## 第一次玩
-
-进入后输入 `剧本`，再输入 `开局 1`、`开局 2` 或 `开局 3`。也可以用剧本的完整名称或唯一名称片段选择。
-
-AI 配置同样在终端完成：
-
-```text
-配置
-```
-
-按提示输入 API 地址、模型 ID 和密钥。密钥输入不回显，配置保存在终端版独立的浏览器资料目录内。对话和过回合需要有效的 AI 配置，使用你所配置服务商的计费规则。`配置状态` 只显示地址、模型和密钥是否已配置。
-
-一局游戏的操作示例：
-
-```text
-剧本
-开局 1
-国情
-人物 王承恩
-召见 王承恩
-近日朝中有什么需要留意的事？
-结束对话
-下诏 经 命有司核查各地仓储，具实奏报。
-奏疏
-奏疏 1
-批复 1 准奏 按奏中所陈办理，事毕复命。
-草稿
-过回合
-史记
-存档 1 首次问政
-退出
-```
-
-召见中的普通文字发送给当前人物。结束对话后的普通文字追加到“其他”诏令草稿；草稿和奏疏批复在 `过回合` 时提交。`下诏 政 内容`、`下诏 军 内容`、`下诏 外 内容`、`下诏 经 内容`、`下诏 杂 内容` 分别指定诏令类别。
-
-所有指令可以带 `/` 前缀，例如 `/国情`、`/召见 王承恩`。`帮助` 显示完整指令。
-
-## 存档与继续游戏
-
-默认数据目录为用户主目录下的 `.tianming-terminal/`，独立于桌面和普通浏览器的存档。草稿、召见、批复及成功结算的回合会写入终端自动档；正常退出及输入结束时也会保存。下次启动后输入 `读档` 继续。
-
-手动档有 1—9 号槽位：`存档 2 名称` 保存，`读档 2` 恢复。新开局会替换终端自动档，手动档保留。可以先 `存档列表` 查看已有存档。
-
-```text
-导出 /你的目录/天命存档.json
-导入 /你的目录/天命存档.json
-```
-
-导出使用原游戏的 JSON 存档格式，剥离 API 密钥；已有同名文件不会被覆盖。导入和读档保留本机的 AI 配置。
-
-终端会显示常规操作反馈。若游戏弹出额外提示，输入 `提示` 读取，并用 `选择 编号` 选择其按钮。原生浏览器确认框会转为终端问题，等待你答复。地图、工坊等专门的图形工具尚未提供独立终端指令。
-
-## 启动参数
+终端模式直接在 Node.js 内运行原游戏脚本，只需 Node.js 22 或更新版本。首次安装终端依赖和命令：
 
 ```bash
-npm run cli -- --scenario 1
-npm run cli -- --data-dir /你的目录/另一个终端存档
-npm run cli -- --browser /浏览器可执行文件路径
-npm run cli -- --check
+npm run setup:cli
+npm run install:cli
 ```
 
-`--check` 仅检查后台引擎能否启动、剧本能否列出。受限 Linux 容器不支持浏览器沙箱时，可以显式添加 `--no-sandbox`；普通环境默认保留沙箱。
+`setup:cli` 只安装 `scripts/terminal/` 的依赖，不安装桌面版依赖或下载浏览器。`install:cli` 将命令安装到当前用户的命令目录：Linux／macOS 默认 `~/.local/bin`，Windows 默认 `%APPDATA%\npm`。若该目录不在 PATH 中，安装器会显示提示。终端不启动浏览器、Electron、网页服务器或后台常驻服务。
 
-可通过 `TM_BROWSER` 指定浏览器。也可同时提供 `TM_API_URL`、`TM_API_MODEL`、`TM_API_KEY`，启动时应用 AI 配置。密钥不必放在命令行参数中。
+安装后可以在任意目录运行 `tianming interactive`、`tianming list`、`tianming help audience`。命令使用当前仓库代码，需要保留仓库目录，并沿用 `.tianming-terminal/` 中的游戏进度。
 
-同一数据目录一次只运行一个终端进程。另开一局可指定不同的 `--data-dir`。不需要单独启动网页服务器，后台调试通信使用进程管道。
+自定义安装目录使用 `npm run install:cli -- --bin-dir /你的命令目录`。卸载使用 `npm run uninstall:cli`（自定义目录需带相同 `--bin-dir`）；卸载保留游戏存档。安装器不会覆盖已有的其他命令。
 
-AI 请求通过自动启动的本机回环转发器发送，仅转发当前配置的服务商地址；不要求服务商支持浏览器跨域请求。流式响应、请求取消及游戏原有的重试规则保留。
+也可以继续从仓库使用 `npm run cli -- <group> <command>`。
 
-定向验证：
+## 独立子命令
+
+每条命令执行后退出。游戏修改自动保存到用户主目录下的 `.tianming-terminal/`，下一条命令自动恢复同一局游戏和回合。新开局替换终端自动档；需要保留旧局时先用 `save write` 存入手动槽位。
+
+```bash
+tianming list
+tianming help audience
+tianming audience help
+tianming scenario list
+tianming game start 1
+tianming game status
+```
+
+`list` 列出命令组；`list audience`、`help audience`、`audience help` 都列出召见子命令及参数。只输入命令组，例如 `people`，也会显示该组用法。`help` 列出全部操作；查询帮助不启动游戏引擎，不需要先开局。操作入口使用英文，说明、人物名称和游戏内容保留中文。
+
+### 查人员与官位
+
+```bash
+tianming people list
+tianming people list 王承恩
+tianming people show 王承恩
+tianming offices list
+tianming offices list 王承恩
+tianming offices show 1
+```
+
+`people show` 显示人物年龄、状态、所在地、势力、能力及现任官位。`offices list` 从当前游戏的官制树读取机构、职位、品秩、任职者和职掌，空位显示“空缺”。人员和官位查询不推进回合。
+
+### 召见并对话
+
+```bash
+tianming audience open 王承恩
+tianming audience status
+tianming audience say "近日朝中有何要事？"
+tianming audience history
+tianming audience close
+```
+
+跨命令恢复同一会话时，保留对话记录、模式及疲劳计数，不重复扣除召见精力。第一次召见、久谈和其他行动仍遵守原游戏的精力及人物状态限制。
+
+私下叙谈使用 `audience open 王承恩 --private`；更换人物或正式／私下模式会结束原会话并发起新的召见。已结束会话的历史可用 `audience history 王承恩` 查看。
+
+### 配置 AI
+
+```bash
+tianming config set
+tianming config show
+tianming config set https://你的服务商地址/v1 你的模型ID
+```
+
+按提示输入地址、模型和密钥。密钥输入不回显，保存在终端数据目录的本机设置文件内，也可通过 `TM_API_KEY` 环境变量提供。`TM_API_URL`、`TM_API_MODEL`、`TM_API_KEY` 三项同时设置时，会在启动时应用配置。
+
+人物回复和回合推演使用所配置的服务商，沿用游戏提示词、流式响应、取消及重试规则。
+
+### 诏令、奏疏与回合
+
+```bash
+tianming edict add economic "命有司核查各地仓储，具实奏报。"
+tianming edict list
+tianming memorial list
+tianming memorial show 1
+tianming memorial reply 1 approve "按奏中所陈办理，事毕复命。"
+tianming turn next
+tianming history show
+```
+
+诏令类别为 `political`（政令）、`military`（军令）、`diplomatic`（外交）、`economic`（经济）、`other`（其他）。省略类别时记入“其他”。
+
+奏疏处理方式为 `approve`（准奏）、`reject`（驳回）、`comment`（批示）。诏令和奏疏批复先保存为待办，`turn next` 才提交并结算。
+
+### 存读档与 JSON 互通
+
+```bash
+tianming save list
+tianming save write 1 首次问政
+tianming save load 1
+tianming save export /你的目录/天命存档.json
+tianming save import /你的目录/天命存档.json
+```
+
+手动档有 1—9 号槽位，0 为当前终端自动档。读档后，后续命令继续操作刚载入的游戏。导出沿用原游戏 JSON 格式，剥离 API 密钥；已有同名文件不会被覆盖。导入和读档保留当前设备的 AI 配置。
+
+终端数据库和设置存放在 `node-database.bin`、`node-settings.json`。数据库写入先完成临时文件写入、同步及原子替换，再报告保存成功。同一个数据目录同时只允许一个终端进程操作。
+
+上一版终端的浏览器 `profile/` 目录保留，Node 模式不直接读取其中的 IndexedDB 文件。已使用上一版的玩家，可从上一版导出游戏 JSON，再用本版 `save import` 导入。桌面版及网页版导出的游戏 JSON 同样可导入。
+
+## JSON 输出与其他参数
+
+```bash
+tianming people show 王承恩 --json
+tianming offices list --json
+tianming game status --data-dir /你的目录/另一局
+tianming --check
+```
+
+`--json` 输出结构化结果，失败时返回非零退出码。配置的 JSON 模式应提供完整参数或已有配置，密钥用 `TM_API_KEY` 提供。`--check` 只检查 Node 引擎启动与剧本列表。
+
+## 连续交互会话
+
+```bash
+tianming interactive
+```
+
+进入后直接使用与独立执行相同的英文子命令，无需重复输入 `tianming`：
+
+```text
+list
+help audience
+people list
+people show 王承恩
+offices list 王承恩
+audience open 王承恩
+audience say "近日朝中有何要事？"
+audience history
+audience close
+edict add economic "核查仓储，具实奏报。"
+edict list
+memorial list
+turn next
+exit
+```
+
+在输入命令组或子命令时按 Tab 补全，连续按两次 Tab 查看候选。`list <group>`、`help <group>`、`<group> help` 随时可用。含空格的内容或文件路径可加引号。
+
+对话使用 `audience say`，诏令使用 `edict add`。普通文字被视为未知命令，会提示查看帮助。`exit`、`quit` 或输入结束时保存进度及当前召见，下次启动自动恢复；用 `audience close` 结束召见。
+
+`prompt show`、`prompt choose <number>` 用于当前交互会话的额外弹窗选择，原生确认与输入提示也在终端答复。
+
+终端不构建图形地图和主面板。地图编辑器、工坊等图形工具没有独立子命令。
+
+## 定向验证
 
 ```bash
 node scripts/terminal/test.cjs
-# 受限 Linux 容器：node scripts/terminal/test.cjs --no-sandbox
+node scripts/terminal/command-test.cjs
+node scripts/terminal/storage-test.cjs
+node scripts/terminal/install-test.cjs
 ```
 
-验证使用临时资料目录、官方剧本和模拟 AI 响应，覆盖真实的草稿录入、问对、回合事务、存读档及进程重启，不读取玩家存档或真实密钥。
+验证使用临时目录和测试 AI 响应。子命令测试清空浏览器搜索路径，并禁止启动任何子进程，覆盖运行时帮助、英文交互命令、人员与官位查询、跨进程召见、流式请求、会话精力、草稿、存读档及 JSON 互通。

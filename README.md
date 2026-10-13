@@ -181,7 +181,7 @@
 
 ## 快速开始
 
-**终端游玩** —— 在仓库根目录运行 `npm run cli`，然后输入 `帮助`。支持中文指令、人物对话、诏令、奏疏、回合推演和存读档。需要 Node.js 22+ 与 Chromium / Chrome / Edge，游戏窗口不会打开。详见 [终端版说明](docs/terminal-play.md)。
+**终端游玩** —— 首次运行 `npm run setup:cli` 和 `npm run install:cli` 安装终端命令，随后在任意目录运行 `tianming interactive` 进入连续会话，随时输入 `list`、`help audience` 查看英文子命令，支持 Tab 补全。`people show 王承恩` 查人员与官位，`offices list` 查官制，`audience open 王承恩` 召见，`audience say "内容"` 对话。仅需 Node.js 22+，会话与进度跨命令保存。详见 [终端版说明](docs/terminal-play.md)。
 
 **在线游玩** —— 直接打开 <https://misfit-user.github.io/tianming/>，在设置中填入你的 AI API key 即可开局。公开站点只跟随仓主明确发布的 `ship-*` Release（或手动指定 ref），不会把 `main` 上尚未发布的开发提交自动暴露给玩家。
 

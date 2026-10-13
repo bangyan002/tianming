@@ -377,7 +377,7 @@ function _wdConfirmPick(name) {
  * @param {string} mode - 'formal' 或 'private'
  * @param {string} [prefillMsg] - 预填消息（如从奏疏传召）
  */
-function openWenduiModal(name, mode, prefillMsg) {
+function openWenduiModal(name, mode, prefillMsg, resumeContext) {
   // 自检·不得对自己发起问对
   try {
     var _slfNm = (P.playerInfo && P.playerInfo.characterName) || '';
@@ -437,8 +437,12 @@ function openWenduiModal(name, mode, prefillMsg) {
       return;
     }
   }
+  var _wdResume = !!(resumeContext && resumeContext.campaignId === GM._campaignId
+    && resumeContext.timelineId === GM._timelineId && Number(resumeContext.turn) === Number(GM.turn)
+    && resumeContext.target === name && GM.wenduiTarget === name && GM._wdState && GM._wdState[name]
+    && !document.getElementById('wendui-modal'));
   // N4: 问对消耗精力
-  if (typeof _spendEnergy === 'function' && !_spendEnergy(5, '问对·' + name)) return;
+  if (!_wdResume && typeof _spendEnergy === 'function' && !_spendEnergy(5, '问对·' + name)) return;
   _wdSessionEpoch++;
   _wdTargetEpoch++;
   _wenduiMode = mode || 'formal';
@@ -646,7 +650,7 @@ function openWenduiModal(name, mode, prefillMsg) {
   }
   // 初始化问对状态
   if (!GM._wdState) GM._wdState = {};
-  GM._wdState[name] = { emotion: 3, turns: 0, ceremony: '', fatigued: false };
+  if (!_wdResume) GM._wdState[name] = { emotion: 3, turns: 0, ceremony: '', fatigued: false };
 
   // 上次问对回顾提示
   var _lastHist = (GM.wenduiHistory[name] || []).filter(function(h) { return h.role === 'npc'; });
